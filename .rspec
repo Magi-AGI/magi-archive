@@ -1,0 +1,6 @@
+--color
+--profile
+--backtrace
+// --format documentation
+--default-path '/home/<user>/<app-dir>/mod'
+--require '/home/<user>/<app-dir>/spec/spec_helper'

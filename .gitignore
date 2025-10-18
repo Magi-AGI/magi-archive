@@ -1,0 +1,50 @@
+# Environment files (NEVER commit secrets!)
+.env
+.env.production
+.env.development
+.env.local
+
+# Logs
+log/*
+*.log
+
+# Temporary files
+tmp/*
+!tmp/.keep
+
+# Database files (use RDS/PostgreSQL dump instead)
+*.sqlite3
+db/*.sqlite3
+
+# Uploaded files (back these up separately or use S3)
+files/*
+!files/.keep
+public/files/*
+!public/files/.htaccess
+
+# Cache
+public/assets/
+.sass-cache/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# bundler
+.bundle/
+vendor/bundle/
+
+# RSpec/test
+spec/examples.txt
+coverage/
+.rspec_status
+
+# Node modules
+node_modules/
