@@ -37,14 +37,37 @@ public/assets/
 .DS_Store
 Thumbs.db
 
-# bundler
+# Bundler
 .bundle/
 vendor/bundle/
+/lib/bundler/man/
 
 # RSpec/test
 spec/examples.txt
+spec/reports/
 coverage/
 .rspec_status
+test/tmp/
+test/version_tmp/
 
 # Node modules
 node_modules/
+
+# Ruby/gem specific
+*.gem
+*.rbc
+/.config
+/InstalledFiles
+/pkg/
+.byebug_history
+.dat*
+.repl_history
+build/
+*.bridgesupport
+.rvmrc
+
+# Documentation
+/.yardoc/
+/_yardoc/
+/doc/
+/rdoc/
