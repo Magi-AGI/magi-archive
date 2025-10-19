@@ -1,0 +1,27 @@
+# PostgreSQL configuration for RDS
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+
+production:
+  <<: *default
+  database: magi_archive_production
+  username: <REDACTED_DB_USER>
+  password: <%= ENV["DATABASE_PASSWORD"] %>
+  host: <REDACTED_RDS_ENDPOINT>
+  port: 5432
+
+development: &development
+  <<: *default
+  database: magi_archive_development
+  host: localhost
+
+test: &test
+  <<: *default
+  database: magi_archive_test
+  host: localhost
+
+cucumber: *test
+cypress: *test
+profile: *development
