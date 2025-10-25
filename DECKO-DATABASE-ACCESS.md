@@ -123,6 +123,117 @@ ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> 'cd /home/<user>/<app-
 
 ---
 
+## Creating and Updating Cards
+
+### Permission Issues
+
+When creating or updating cards programmatically, you'll encounter permission errors:
+
+```
+Validation failed: Permission denied You don't have permission to create [CardName]
+```
+
+**Solution**: Wrap card creation/updates in `Card::Auth.as_bot` block to bypass permissions.
+
+### Method 1: Single Card via Runner (Slow - 2-5 seconds per command)
+
+Use this for one-off card creation:
+
+```bash
+ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> 'cd /home/<user>/<app-dir> && set -a && source .env.production && set +a && PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card runner '\''
+Card::Auth.as_bot do
+  Card.create!(name: "MyCard", content: "Card content here")
+end
+'\'' '
+```
+
+### Method 2: Multiple Cards via Heredoc (Recommended)
+
+**Best practice for creating multiple cards**: Use heredoc to pipe commands into console. This avoids the 2-5 second Rails boot time for each card.
+
+```bash
+ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> << 'ENDSSH'
+cd /home/<user>/<app-dir>
+set -a && source .env.production && set +a
+PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card console << 'ENDCONSOLE'
+Card::Auth.as_bot do
+  # Create first card
+  content1 = <<-HTML
+<ol>
+<li>[[MyCard+SubCard1|Sub Card 1]]</li>
+<li>[[MyCard+SubCard2|Sub Card 2]]</li>
+</ol>
+HTML
+
+  card = Card.fetch("MyCard+table-of-contents")
+  if card
+    card.update!(content: content1)
+    puts "Updated existing card"
+  else
+    Card.create!(name: "MyCard+table-of-contents", content: content1)
+    puts "Created new card"
+  end
+
+  # Create second card
+  Card.create!(name: "MyCard+SubCard1", content: "Content for sub card 1")
+  puts "Created SubCard1"
+
+  # Create third card
+  Card.create!(name: "MyCard+SubCard2", content: "Content for sub card 2")
+  puts "Created SubCard2"
+end
+exit
+ENDCONSOLE
+ENDSSH
+```
+
+**Why this works better:**
+- Rails boots only once (saves 2-5 seconds per additional card)
+- Can create multiple cards in a single session
+- Easier to debug (see output immediately)
+- Simpler quote escaping (heredoc handles it)
+
+### Real Example: Creating Table of Contents
+
+This example created three table-of-contents cards in the Neoterics+Metta structure:
+
+```bash
+ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> << 'ENDSSH'
+cd /home/<user>/<app-dir>
+set -a && source .env.production && set +a
+PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card console << 'ENDCONSOLE'
+Card::Auth.as_bot do
+  content = <<-HTML
+<ol>
+<li>[[Neoterics+Metta+drive-docs+Doc1|Document 1]]</li>
+<li>[[Neoterics+Metta+drive-docs+Doc2|Document 2]]</li>
+</ol>
+HTML
+
+  card = Card.fetch("Neoterics+Metta+drive-docs+table-of-contents")
+  if card
+    card.update!(content: content)
+    puts "Updated existing card"
+  else
+    Card.create!(name: "Neoterics+Metta+drive-docs+table-of-contents", content: content)
+    puts "Created new card"
+  end
+end
+exit
+ENDCONSOLE
+ENDSSH
+```
+
+**Output:**
+```
+Loading production environment (Rails 7.2.2.2)
+Switch to inspect mode.
+Created new card
+nil
+```
+
+---
+
 ## Alternative: Using Decko Console Interactively
 
 For longer sessions, use the interactive console:
@@ -164,6 +275,11 @@ PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card console
 
 **Cause**: Improper quote escaping
 **Solution**: Use pattern `'\''Ruby code here'\''` for the script/card runner argument
+
+### Error: `Validation failed: Permission denied You don't have permission to create [CardName]`
+
+**Cause**: Default user context doesn't have permission to create/update cards programmatically
+**Solution**: Wrap operations in `Card::Auth.as_bot` block (see "Creating and Updating Cards" section above)
 
 ---
 
@@ -212,4 +328,7 @@ scp -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP>:/home/<user>/<app-dir>
 ---
 
 **Last Updated**: 2025-10-25
-**Tested**: Successfully retrieved 641 cards including Neoterics knowledge structure
+**Tested**:
+- Successfully retrieved 641 cards including Neoterics knowledge structure
+- Successfully created table-of-contents cards using heredoc method
+- Created 3 nested TOC cards: drive-docs (17 entries), metta-lang (22 entries), transcripts (27 entries)
