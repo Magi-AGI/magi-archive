@@ -71,3 +71,4 @@ build/
 /_yardoc/
 /doc/
 /rdoc/
+backup-*.sql
