@@ -444,7 +444,84 @@ ENDSSH
 
 ---
 
-## Next Steps for Investigation
+## SOLUTION IMPLEMENTED (2025-10-25)
+
+### Fix Summary
+
+Created `/home/<user>/<app-dir>/config/initializers/upload_cache_fix.rb` to override Decko's cached-upload assignment. The fix uses `with_selected_action_id` wrapper to force select_action callbacks to run, which rehydrates the CarrierWave uploader before validation.
+
+### Why It Works
+
+**Problem**: Stage 2 of the upload flow skipped the select_action callbacks, leaving `attachment.file` empty and tripping the "File is missing" validation.
+
+**Solution**: Running the selection inside `with_selected_action_id` ensures the cached file is loaded (matching the working update-path behavior) before the create validation fires.
+
+### Implementation
+
+**File**: `/home/<user>/<app-dir>/config/initializers/upload_cache_fix.rb`
+
+```ruby
+Rails.application.config.after_initialize do
+  module UploadCacheFix
+    def assign_attachment_on_create
+      return unless (action = Card::Action.fetch(@action_id_of_cached_upload))
+
+      Rails.logger.info "=== UploadCacheFix: Fetched action #{action.id} for cached upload"
+
+      # Use with_selected_action_id to force select_action callbacks
+      upload_cache_card.with_selected_action_id(action.id) do
+        Rails.logger.info "=== UploadCacheFix: Running select_file_revision within callback context"
+        upload_cache_card.select_file_revision
+      end
+
+      # Verify the attachment was loaded
+      if upload_cache_card.attachment.file.present?
+        Rails.logger.info "=== UploadCacheFix: Successfully loaded cached file"
+        assign_attachment upload_cache_card.attachment.file, action.comment
+      else
+        Rails.logger.warn "=== UploadCacheFix: WARNING - Cached file still not loaded after callback!"
+        assign_attachment upload_cache_card.attachment.file, action.comment
+      end
+    end
+  end
+
+  Card::Set::Type::File.send(:prepend, UploadCacheFix)
+  Rails.logger.info "=== Applied UploadCacheFix patch to Card::Set::Type::File"
+end
+```
+
+### Testing the Fix
+
+**To test web upload after applying fix:**
+
+1. Navigate to https://wiki.magi-agi.org
+2. Go to any card that can have file attachments
+3. Try uploading a PDF file
+4. Monitor logs: `ssh ubuntu@<REDACTED_EC2_IP> "tail -f /home/<user>/<app-dir>/log/production.log"`
+
+**Expected log output on success:**
+```
+=== UploadCacheFix: Fetched action [action_id] for cached upload
+=== UploadCacheFix: Running select_file_revision within callback context
+=== UploadCacheFix: Successfully loaded cached file
+Completed 200 OK
+```
+
+**If still failing, look for:**
+```
+=== UploadCacheFix: WARNING - Cached file still not loaded after callback!
+```
+
+### Status
+
+**Applied**: 2025-10-25 20:08 UTC
+**Server restarted**: Yes
+**Patch loaded**: Confirmed in logs
+**Testing required**: Yes - web upload test needed to confirm fix works
+
+---
+
+## Next Steps for Investigation (if fix doesn't work)
 
 1. **Check Decko GitHub issues** for similar reports
 2. **Test in development environment** (no Cloudflare) to isolate proxy issues
