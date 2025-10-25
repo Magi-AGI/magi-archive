@@ -281,6 +281,54 @@ PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card console
 **Cause**: Default user context doesn't have permission to create/update cards programmatically
 **Solution**: Wrap operations in `Card::Auth.as_bot` block (see "Creating and Updating Cards" section above)
 
+### Error: File upload shows "0 bytes uploaded" through web interface
+
+**Cause**: Cloudflare proxy interferes with Rails session cookies during Decko's two-stage upload process (upload → cache → submit form)
+**Solution**: Configure session store and Carrierwave for Cloudflare compatibility
+
+**Session Store Configuration** (`/home/<user>/<app-dir>/config/initializers/session_store.rb`):
+```ruby
+# Session store configuration for Cloudflare compatibility
+Rails.application.config.session_store :cookie_store,
+  key: '_magi_archive_session',
+  same_site: :lax,
+  secure: true,
+  httponly: true,
+  expire_after: 2.hours
+
+# Ensure cookies work with Cloudflare proxy
+Rails.application.config.action_dispatch.cookies_same_site_protection = :lax
+```
+
+**Carrierwave Configuration** (`/home/<user>/<app-dir>/config/initializers/carrierwave.rb`):
+```ruby
+# Carrierwave configuration for Cloudflare compatibility
+CarrierWave.configure do |config|
+  # Ensure cache is stored in filesystem, not memory
+  config.cache_storage = :file
+
+  # Use database for storing upload info instead of sessions
+  config.move_to_cache = true
+  config.remove_previously_stored_files_after_update = false
+
+  # Set cache dir to a persistent location
+  config.cache_dir = "#{Rails.root}/tmp/uploads"
+
+  # Enable file operations
+  config.enable_processing = true
+end
+```
+
+**After creating these files:**
+```bash
+# Create cache directory
+mkdir -p /home/<user>/<app-dir>/tmp/uploads
+chmod 755 /home/<user>/<app-dir>/tmp/uploads
+
+# Restart Decko server
+sudo systemctl restart magi-archive
+```
+
 ---
 
 ## Systemd Service Configuration
@@ -332,3 +380,5 @@ scp -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP>:/home/<user>/<app-dir>
 - Successfully retrieved 641 cards including Neoterics knowledge structure
 - Successfully created table-of-contents cards using heredoc method
 - Created 3 nested TOC cards: drive-docs (17 entries), metta-lang (22 entries), transcripts (27 entries)
+- Migrated 106 markdown files from MkDocs to Decko cards
+- Fixed file upload issue with Cloudflare proxy (session store + Carrierwave configuration)
