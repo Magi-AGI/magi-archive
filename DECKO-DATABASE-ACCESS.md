@@ -1,384 +1,154 @@
-# Accessing Decko Database via Console
+# Accessing Decko Data via Remote Console
 
 **Created**: 2025-10-25
-**Server**: EC2 at <REDACTED_EC2_IP>
-**Application**: /home/<user>/<app-dir>
+**Environment**: Production Decko deck (Ubuntu 22.04)
+**Last Reviewed**: 2025-10-26
 
 ---
 
-## Problem
+## Overview
 
-When trying to run Decko commands via SSH, you'll encounter several issues:
-1. **rbenv not in PATH** - Ruby isn't found by default in non-interactive shells
-2. **Environment variables not loaded** - `.env.production` isn't sourced automatically
-3. **Database connection fails** - Without the environment, Rails can't connect to PostgreSQL
+Administrators occasionally need to run Decko/ActiveRecord scripts against the production deck. Remote shells do not inherit the service environment, so the workflow below standardises how to initialise Ruby, load credentials, and execute a `script/card runner` command without exposing secret infrastructure details in this repository.
 
 ---
 
-## Solution: Complete Command Template
+## One-Line Command Template
 
 ```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> 'cd /home/<user>/<app-dir> && set -a && source .env.production && set +a && PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card runner '\''YOUR_RUBY_CODE_HERE'\'' '
+ssh -i <ssh-key> <user>@<deck-host> '
+  cd <deck-root> &&
+  set -a && source .env.production && set +a &&
+  PATH="/home/<user>/.rbenv/shims:$PATH" \
+    script/card runner '\''YOUR_RUBY_CODE'\''
+'
 ```
 
-### Breaking Down the Command
+Replace the bracketed placeholders with safe values stored in your password manager. The key ideas are:
+- enter the deck directory (`<deck-root>`)
+- export environment variables from `.env.production`
+- prepend the rbenv shims directory to `PATH`
+- invoke `script/card runner` with correctly escaped quotes
 
-1. **SSH into server**:
+---
+
+## Step-by-Step Breakdown
+
+1. **SSH**
    ```bash
-   ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP>
+   ssh -i <ssh-key> <user>@<deck-host>
    ```
 
-2. **Navigate to app directory**:
+2. **Deck root**
    ```bash
-   cd /home/<user>/<app-dir>
+   cd <deck-root>
    ```
 
-3. **Load environment variables** (critical!):
+3. **Load environment**
    ```bash
-   set -a                    # Export all variables set from now on
-   source .env.production    # Load DATABASE_PASSWORD and other vars
-   set +a                    # Stop exporting variables
+   set -a
+   source .env.production
+   set +a
    ```
 
-4. **Add rbenv to PATH**:
+4. **Expose rbenv shims**
    ```bash
-   PATH="/home/ubuntu/.rbenv/shims:$PATH"
+   PATH="/home/<user>/.rbenv/shims:$PATH"
    ```
 
-5. **Run Decko command**:
+5. **Run Decko code**
    ```bash
    script/card runner 'Ruby code here'
    ```
 
 ---
 
-## Example Commands
+## Common Snippets (use with placeholders)
 
-### List All Cards (with limit)
-
+### List sample cards
 ```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> 'cd /home/<user>/<app-dir> && set -a && source .env.production && set +a && PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card runner '\''Card.all.limit(20).each { |c| puts "#{c.id}: #{c.name} (#{c.type_name})" }'\'' '
+script/card runner 'Card.all.limit(20).each { |c| puts "#{c.id}: #{c.name} (#{c.type_name})" }'
 ```
 
-### Count Total Cards
-
+### Count cards
 ```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> 'cd /home/<user>/<app-dir> && set -a && source .env.production && set +a && PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card runner '\''puts "Total cards: #{Card.count}"'\'' '
+script/card runner 'puts "Total cards: #{Card.count}"'
 ```
 
-### Show Recent Cards
-
+### Recent cards
 ```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> 'cd /home/<user>/<app-dir> && set -a && source .env.production && set +a && PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card runner '\''Card.order(created_at: :desc).limit(20).each { |c| puts "#{c.id}: #{c.name} (#{c.type_name})" }'\'' '
+script/card runner 'Card.order(created_at: :desc).limit(20).each { |c| puts "#{c.id}: #{c.name}" }'
 ```
 
-### Find Specific Card by Name
-
+### Fetch specific card
 ```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> 'cd /home/<user>/<app-dir> && set -a && source .env.production && set +a && PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card runner '\''card = Card.fetch("Neoterics"); puts "#{card.id}: #{card.name} - #{card.content[0..100]}"'\'' '
+script/card runner '
+  card = Card.fetch("Example+Card")
+  puts "#{card.id}: #{card.name}"
+'
 ```
 
-### Search Cards by Pattern
-
-```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> 'cd /home/<user>/<app-dir> && set -a && source .env.production && set +a && PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card runner '\''Card.where("name LIKE ?", "Neoterics%").each { |c| puts "#{c.id}: #{c.name}" }'\'' '
-```
-
-### Get Top-Level Cards (no + in name)
-
-```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> 'cd /home/<user>/<app-dir> && set -a && source .env.production && set +a && PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card runner '\''Card.where.not("name LIKE ?", "%+%").order(id: :desc).limit(15).each { |c| puts "#{c.id}: #{c.name} (#{c.type_name})" }'\'' '
-```
+Wrap modifications with `Card::Auth.as_bot` when elevated permissions are required.
 
 ---
 
-## Important Notes
+## Quote Escaping Tips
 
-### Quote Escaping
-
-When running Ruby code remotely, you need **triple-level quoting**:
-
-1. **Outer single quotes** `'...'` - For the SSH command
-2. **Escaped single quotes** `'\''...'\'` - For the script/card runner argument
-3. **Inner double quotes** `"..."` - For Ruby string interpolation
+Remote execution requires three layers of quoting:
+1. outer single quotes for the SSH command
+2. escaped inner single quotes for the `runner` argument (`'\'' ... '\''`)
+3. double quotes inside Ruby for interpolation
 
 Example:
 ```bash
-script/card runner '\''puts "Hello #{name}"'\''
+script/card runner '\''puts "Hello #{ENV.fetch("USER")}"'\''
 ```
 
-### Multi-line Commands
-
-For complex queries, you can use:
-
-```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> 'cd /home/<user>/<app-dir> && set -a && source .env.production && set +a && PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card runner '\''
-  puts "=== Analysis ==="
-  total = Card.count
-  recent = Card.where("created_at > ?", 1.day.ago).count
-  puts "Total: #{total}"
-  puts "Last 24h: #{recent}"
-'\'' '
-```
+For multi-line snippets, embed newline characters or use a heredoc on the remote host.
 
 ---
 
-## Creating and Updating Cards
+## Troubleshooting
 
-### Permission Issues
-
-When creating or updating cards programmatically, you'll encounter permission errors:
-
-```
-Validation failed: Permission denied You don't have permission to create [CardName]
-```
-
-**Solution**: Wrap card creation/updates in `Card::Auth.as_bot` block to bypass permissions.
-
-### Method 1: Single Card via Runner (Slow - 2-5 seconds per command)
-
-Use this for one-off card creation:
-
-```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> 'cd /home/<user>/<app-dir> && set -a && source .env.production && set +a && PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card runner '\''
-Card::Auth.as_bot do
-  Card.create!(name: "MyCard", content: "Card content here")
-end
-'\'' '
-```
-
-### Method 2: Multiple Cards via Heredoc (Recommended)
-
-**Best practice for creating multiple cards**: Use heredoc to pipe commands into console. This avoids the 2-5 second Rails boot time for each card.
-
-```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> << 'ENDSSH'
-cd /home/<user>/<app-dir>
-set -a && source .env.production && set +a
-PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card console << 'ENDCONSOLE'
-Card::Auth.as_bot do
-  # Create first card
-  content1 = <<-HTML
-<ol>
-<li>[[MyCard+SubCard1|Sub Card 1]]</li>
-<li>[[MyCard+SubCard2|Sub Card 2]]</li>
-</ol>
-HTML
-
-  card = Card.fetch("MyCard+table-of-contents")
-  if card
-    card.update!(content: content1)
-    puts "Updated existing card"
-  else
-    Card.create!(name: "MyCard+table-of-contents", content: content1)
-    puts "Created new card"
-  end
-
-  # Create second card
-  Card.create!(name: "MyCard+SubCard1", content: "Content for sub card 1")
-  puts "Created SubCard1"
-
-  # Create third card
-  Card.create!(name: "MyCard+SubCard2", content: "Content for sub card 2")
-  puts "Created SubCard2"
-end
-exit
-ENDCONSOLE
-ENDSSH
-```
-
-**Why this works better:**
-- Rails boots only once (saves 2-5 seconds per additional card)
-- Can create multiple cards in a single session
-- Easier to debug (see output immediately)
-- Simpler quote escaping (heredoc handles it)
-
-### Real Example: Creating Table of Contents
-
-This example created three table-of-contents cards in the Neoterics+Metta structure:
-
-```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> << 'ENDSSH'
-cd /home/<user>/<app-dir>
-set -a && source .env.production && set +a
-PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card console << 'ENDCONSOLE'
-Card::Auth.as_bot do
-  content = <<-HTML
-<ol>
-<li>[[Neoterics+Metta+drive-docs+Doc1|Document 1]]</li>
-<li>[[Neoterics+Metta+drive-docs+Doc2|Document 2]]</li>
-</ol>
-HTML
-
-  card = Card.fetch("Neoterics+Metta+drive-docs+table-of-contents")
-  if card
-    card.update!(content: content)
-    puts "Updated existing card"
-  else
-    Card.create!(name: "Neoterics+Metta+drive-docs+table-of-contents", content: content)
-    puts "Created new card"
-  end
-end
-exit
-ENDCONSOLE
-ENDSSH
-```
-
-**Output:**
-```
-Loading production environment (Rails 7.2.2.2)
-Switch to inspect mode.
-Created new card
-nil
-```
+| Symptom | Likely Cause | Fix |
+| --- | --- | --- |
+| `/usr/bin/env: 'ruby': No such file or directory` | rbenv shims absent | Prepend the shims directory to `PATH`. |
+| `fe_sendauth: no password supplied` | `.env.production` not sourced | Use `set -a && source .env.production && set +a`. |
+| `cat: .env.production: No such file or directory` | Wrong working directory | `cd <deck-root>` first. |
+| Permission errors when creating cards | Runner executing as default user | Wrap changes in `Card::Auth.as_bot do ... end`. |
 
 ---
 
-## Alternative: Using Decko Console Interactively
+## Backups (masked example)
 
-For longer sessions, use the interactive console:
-
-```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP>
-
-# Once logged in:
-cd /home/<user>/<app-dir>
-set -a && source .env.production && set +a
-PATH="/home/ubuntu/.rbenv/shims:$PATH" script/card console
-
-# Now you're in an interactive Rails console:
-> Card.count
-> Card.fetch("Neoterics")
-> exit
-```
-
----
-
-## Common Errors & Solutions
-
-### Error: `/usr/bin/env: 'ruby': No such file or directory`
-
-**Cause**: rbenv shims not in PATH
-**Solution**: Add `PATH="/home/ubuntu/.rbenv/shims:$PATH"` before command
-
-### Error: `connection to server at "172.31.21.37", port 5432 failed: fe_sendauth: no password supplied`
-
-**Cause**: `.env.production` not loaded, so `DATABASE_PASSWORD` is missing
-**Solution**: Use `set -a && source .env.production && set +a` before command
-
-### Error: `cat: .env.production: No such file or directory`
-
-**Cause**: Not in the correct directory
-**Solution**: Always `cd /home/<user>/<app-dir>` first
-
-### Error: Syntax errors with quotes
-
-**Cause**: Improper quote escaping
-**Solution**: Use pattern `'\''Ruby code here'\''` for the script/card runner argument
-
-### Error: `Validation failed: Permission denied You don't have permission to create [CardName]`
-
-**Cause**: Default user context doesn't have permission to create/update cards programmatically
-**Solution**: Wrap operations in `Card::Auth.as_bot` block (see "Creating and Updating Cards" section above)
-
-### Error: File upload shows "0 bytes uploaded" through web interface
-
-**Cause**: Cloudflare proxy interferes with Rails session cookies during Decko's two-stage upload process (upload → cache → submit form)
-**Solution**: Configure session store and Carrierwave for Cloudflare compatibility
-
-**Session Store Configuration** (`/home/<user>/<app-dir>/config/initializers/session_store.rb`):
-```ruby
-# Session store configuration for Cloudflare compatibility
-Rails.application.config.session_store :cookie_store,
-  key: '_magi_archive_session',
-  same_site: :lax,
-  secure: true,
-  httponly: true,
-  expire_after: 2.hours
-
-# Ensure cookies work with Cloudflare proxy
-Rails.application.config.action_dispatch.cookies_same_site_protection = :lax
-```
-
-**Carrierwave Configuration** (`/home/<user>/<app-dir>/config/initializers/carrierwave.rb`):
-```ruby
-# Carrierwave configuration for Cloudflare compatibility
-CarrierWave.configure do |config|
-  # Ensure cache is stored in filesystem, not memory
-  config.cache_storage = :file
-
-  # Use database for storing upload info instead of sessions
-  config.move_to_cache = true
-  config.remove_previously_stored_files_after_update = false
-
-  # Set cache dir to a persistent location
-  config.cache_dir = "#{Rails.root}/tmp/uploads"
-
-  # Enable file operations
-  config.enable_processing = true
-end
-```
-
-**After creating these files:**
-```bash
-# Create cache directory
-mkdir -p /home/<user>/<app-dir>/tmp/uploads
-chmod 755 /home/<user>/<app-dir>/tmp/uploads
-
-# Restart Decko server
-sudo systemctl restart magi-archive
-```
-
----
-
-## Systemd Service Configuration
-
-The production server runs Decko via systemd, which handles environment loading automatically:
-
-**Service file**: `/etc/systemd/system/magi-archive.service`
-
-```ini
-[Service]
-EnvironmentFile=/home/<user>/<app-dir>/.env.production
-ExecStart=/home/ubuntu/.rbenv/shims/decko server -b 0.0.0.0 -p 3000
-```
-
-This is why the running application works fine - systemd loads the environment file automatically.
-
----
-
-## Database Backup
-
-The cards are stored in PostgreSQL RDS. To back up the database:
+Use the same environment bootstrap, then call `pg_dump` against the managed PostgreSQL endpoint recorded in your secrets vault:
 
 ```bash
-ssh -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP> "cd /home/<user>/<app-dir> && set -a && source .env.production && set +a && pg_dump -h <REDACTED_RDS_ENDPOINT> -U <REDACTED_DB_USER> -d magi_archive_production > backup-\$(date +%Y%m%d-%H%M%S).sql"
+ssh -i <ssh-key> <user>@<deck-host> '
+  cd <deck-root> &&
+  set -a && source .env.production && set +a &&
+  pg_dump -h <rds-endpoint> -U <db-user> -d <db-name> \
+    > backup-$(date +%Y%m%d-%H%M%S).sql
+'
 ```
 
-Then download the backup:
-
-```bash
-scp -i ~/.ssh/<REDACTED_KEY>.pem ubuntu@<REDACTED_EC2_IP>:/home/<user>/<app-dir>/backup-*.sql ./
-```
+Download backups with `scp` using the same placeholder values.
 
 ---
 
-## Quick Reference
+## Quick Reference (store securely outside repo)
 
-**SSH Key Location**: `~/.ssh/<REDACTED_KEY>.pem`
-**Server IP**: `<REDACTED_EC2_IP>`
-**App Directory**: `/home/<user>/<app-dir>`
-**Environment File**: `/home/<user>/<app-dir>/.env.production`
-**Database Host**: `<REDACTED_RDS_ENDPOINT>`
-**Ruby Path**: `/home/ubuntu/.rbenv/shims/`
-**Decko Command**: `script/card runner 'Ruby code'`
+- SSH key path
+- SSH username
+- Deck host (public DNS or bastion alias)
+- Deck root (e.g., `/home/<user>/magi-archive`)
+- rbenv shims path
+- Database endpoint, name, and role account
+
+These identifiers are intentionally omitted here to keep the repository free of sensitive infrastructure details.
 
 ---
 
-**Last Updated**: 2025-10-25
-**Tested**:
-- Successfully retrieved 641 cards including Neoterics knowledge structure
-- Successfully created table-of-contents cards using heredoc method
-- Created 3 nested TOC cards: drive-docs (17 entries), metta-lang (22 entries), transcripts (27 entries)
-- Migrated 106 markdown files from MkDocs to Decko cards
-- Fixed file upload issue with Cloudflare proxy (session store + Carrierwave configuration)
+## Change Log
+
+- 2025-10-26: Redacted infrastructure specifics and added placeholder-driven workflow.
+- 2025-10-25: Initial guide documenting remote console approach.

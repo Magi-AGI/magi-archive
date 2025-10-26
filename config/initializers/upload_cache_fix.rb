@@ -20,7 +20,7 @@
 #
 # TO TEST AFTER UPDATES:
 # 1. Upload a PDF through web interface at https://wiki.magi-agi.org
-# 2. Check logs: tail -f /home/<user>/<app-dir>/log/production.log | grep UploadCacheFix
+# 2. Check logs: tail -f /home/ubuntu/magi-archive/log/production.log | grep UploadCacheFix
 # 3. Should see: "UploadCacheFix: assigning cached file" followed by "Completed 200 OK"
 #
 # DECKO VERSION: 0.19.1 (2025-10-26)

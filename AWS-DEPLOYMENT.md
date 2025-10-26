@@ -127,7 +127,7 @@ With free tier: **$0-5/month** for first year!
    - Engine: **PostgreSQL 15**
    - Template: **Free tier** (first year) or **Production** (multi-AZ)
    - DB instance identifier: `magi-archive-db`
-   - Master username: `<REDACTED_DB_USER>`
+   - Master username: `decko_admin`
    - Master password: `[generate secure password, save to password manager]`
 
 3. **Instance configuration**:
@@ -159,7 +159,7 @@ Once created, note these values:
 Endpoint: magi-archive-db.xxxxxxxxxx.us-east-1.rds.amazonaws.com
 Port: 5432
 Database name: magi_archive_production
-Username: <REDACTED_DB_USER>
+Username: decko_admin
 Password: [your secure password]
 ```
 
@@ -186,8 +186,8 @@ Password: [your secure password]
    - Name: `magi-archive-key`
    - Type: RSA
    - Format: `.pem` (for SSH)
-   - Download and save securely: `~/<REDACTED_KEY>.pem`
-   - Set permissions: `chmod 400 ~/<REDACTED_KEY>.pem`
+   - Download and save securely: `~/magi-archive-key.pem`
+   - Set permissions: `chmod 400 ~/magi-archive-key.pem`
 
 6. **Network settings**:
    - VPC: Default
@@ -238,7 +238,7 @@ Password: [your secure password]
 
 ```bash
 # From your local machine
-ssh -i ~/<REDACTED_KEY>.pem ubuntu@52.x.x.x
+ssh -i ~/magi-archive-key.pem ubuntu@52.x.x.x
 # Replace 52.x.x.x with your Elastic IP
 ```
 
@@ -289,7 +289,7 @@ sudo apt install -y postgresql-client-14
 
 # Test connection to RDS
 psql -h magi-archive-db.xxxxxxxxxx.us-east-1.rds.amazonaws.com \
-     -U <REDACTED_DB_USER> -d magi_archive_production
+     -U decko_admin -d magi_archive_production
 
 # Enter password when prompted
 # Type \q to exit
@@ -332,7 +332,7 @@ production:
   encoding: unicode
   pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
   database: magi_archive_production
-  username: <REDACTED_DB_USER>
+  username: decko_admin
   password: <%= ENV['DATABASE_PASSWORD'] %>
   host: magi-archive-db.xxxxxxxxxx.us-east-1.rds.amazonaws.com
   port: 5432
@@ -340,7 +340,7 @@ production:
 
 #### 5.3 Set Environment Variables
 
-Create `/home/<user>/<app-dir>/.env.production`:
+Create `/home/ubuntu/magi-archive/.env.production`:
 
 ```bash
 # Rails
@@ -358,7 +358,7 @@ DECKO_HOST=yourdomain.com  # Or Elastic IP for now
 
 **Generate SECRET_KEY_BASE**:
 ```bash
-cd /home/<user>/<app-dir>
+cd /home/ubuntu/magi-archive
 bundle exec rails secret
 # Copy output to .env.production
 ```
@@ -366,7 +366,7 @@ bundle exec rails secret
 #### 5.4 Initialize Database
 
 ```bash
-cd /home/<user>/<app-dir>
+cd /home/ubuntu/magi-archive
 
 # Load environment
 export $(cat .env.production | xargs)
@@ -418,14 +418,14 @@ Create `/etc/nginx/sites-available/magi-archive`:
 
 ```nginx
 upstream puma {
-  server unix:///home/<user>/<app-dir>/tmp/sockets/puma.sock;
+  server unix:///home/ubuntu/magi-archive/tmp/sockets/puma.sock;
 }
 
 server {
   listen 80;
   server_name yourdomain.com www.yourdomain.com;  # Or use Elastic IP
 
-  root /home/<user>/<app-dir>/public;
+  root /home/ubuntu/magi-archive/public;
   access_log /var/log/nginx/magi-archive-access.log;
   error_log /var/log/nginx/magi-archive-error.log;
 
@@ -479,13 +479,13 @@ port ENV.fetch("PORT") { 3000 } if ENV['RAILS_ENV'] != 'production'
 environment ENV.fetch("RAILS_ENV") { "development" }
 
 if ENV['RAILS_ENV'] == 'production'
-  bind 'unix:///home/<user>/<app-dir>/tmp/sockets/puma.sock'
+  bind 'unix:///home/ubuntu/magi-archive/tmp/sockets/puma.sock'
 
-  pidfile '/home/<user>/<app-dir>/tmp/pids/puma.pid'
-  state_path '/home/<user>/<app-dir>/tmp/pids/puma.state'
+  pidfile '/home/ubuntu/magi-archive/tmp/pids/puma.pid'
+  state_path '/home/ubuntu/magi-archive/tmp/pids/puma.state'
 
-  stdout_redirect '/home/<user>/<app-dir>/log/puma.stdout.log',
-                  '/home/<user>/<app-dir>/log/puma.stderr.log',
+  stdout_redirect '/home/ubuntu/magi-archive/log/puma.stdout.log',
+                  '/home/ubuntu/magi-archive/log/puma.stderr.log',
                   true
 
   workers ENV.fetch("WEB_CONCURRENCY") { 2 }
@@ -497,8 +497,8 @@ plugin :tmp_restart
 
 Create socket directory:
 ```bash
-mkdir -p /home/<user>/<app-dir>/tmp/sockets
-mkdir -p /home/<user>/<app-dir>/tmp/pids
+mkdir -p /home/ubuntu/magi-archive/tmp/sockets
+mkdir -p /home/ubuntu/magi-archive/tmp/pids
 ```
 
 ---
@@ -517,8 +517,8 @@ After=network.target
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/<user>/<app-dir>
-EnvironmentFile=/home/<user>/<app-dir>/.env.production
+WorkingDirectory=/home/ubuntu/magi-archive
+EnvironmentFile=/home/ubuntu/magi-archive/.env.production
 ExecStart=/home/ubuntu/.rbenv/shims/bundle exec puma -C config/puma.rb
 Restart=always
 RestartSec=10
@@ -625,7 +625,7 @@ sudo certbot renew --dry-run
    - Or use Rails console:
 
 ```bash
-cd /home/<user>/<app-dir>
+cd /home/ubuntu/magi-archive
 bundle exec rails console -e production
 
 # Create user (syntax depends on Decko's auth system)
@@ -688,7 +688,7 @@ Already configured! RDS automatically backs up database.
 
 **Push to GitLab** (best practice):
 ```bash
-cd /home/<user>/<app-dir>
+cd /home/ubuntu/magi-archive
 git add .
 git commit -m "Production deployment"
 git push origin main
@@ -709,7 +709,7 @@ aws configure
 # Daily backup script
 cat > /home/ubuntu/backup-uploads.sh <<'EOF'
 #!/bin/bash
-aws s3 sync /home/<user>/<app-dir>/public/uploads \
+aws s3 sync /home/ubuntu/magi-archive/public/uploads \
   s3://magi-archive-backups/uploads/$(date +%Y-%m-%d)
 EOF
 
@@ -747,7 +747,7 @@ sudo systemctl restart nginx
 
 **Check application logs**:
 ```bash
-tail -f /home/<user>/<app-dir>/log/production.log
+tail -f /home/ubuntu/magi-archive/log/production.log
 sudo journalctl -u magi-archive -n 100
 ```
 
@@ -759,9 +759,9 @@ sudo journalctl -u magi-archive -n 100
 
 ```bash
 # SSH to server
-ssh -i ~/<REDACTED_KEY>.pem ubuntu@52.x.x.x
+ssh -i ~/magi-archive-key.pem ubuntu@52.x.x.x
 
-cd /home/<user>/<app-dir>
+cd /home/ubuntu/magi-archive
 
 # Pull latest code
 git pull origin main
@@ -786,7 +786,7 @@ sudo journalctl -u magi-archive -f
 ### Rails Console Access
 
 ```bash
-cd /home/<user>/<app-dir>
+cd /home/ubuntu/magi-archive
 export $(cat .env.production | xargs)
 bundle exec rails console -e production
 ```
@@ -796,14 +796,14 @@ bundle exec rails console -e production
 **Backup**:
 ```bash
 pg_dump -h magi-archive-db.xxxxxxxxxx.us-east-1.rds.amazonaws.com \
-  -U <REDACTED_DB_USER> -d magi_archive_production \
+  -U decko_admin -d magi_archive_production \
   > backup-$(date +%Y%m%d).sql
 ```
 
 **Restore**:
 ```bash
 psql -h magi-archive-db.xxxxxxxxxx.us-east-1.rds.amazonaws.com \
-  -U <REDACTED_DB_USER> -d magi_archive_production \
+  -U decko_admin -d magi_archive_production \
   < backup-20251016.sql
 ```
 
@@ -828,7 +828,7 @@ sudo journalctl -u magi-archive -n 50
 ### Can't connect to database
 ```bash
 # Test from EC2
-psql -h [RDS_ENDPOINT] -U <REDACTED_DB_USER> -d magi_archive_production
+psql -h [RDS_ENDPOINT] -U decko_admin -d magi_archive_production
 
 # If fails:
 # - Check RDS security group allows EC2 security group
@@ -843,7 +843,7 @@ psql -h [RDS_ENDPOINT] -U <REDACTED_DB_USER> -d magi_archive_production
 ps aux | grep puma
 
 # Check socket exists:
-ls -la /home/<user>/<app-dir>/tmp/sockets/
+ls -la /home/ubuntu/magi-archive/tmp/sockets/
 
 # Restart both:
 sudo systemctl restart magi-archive

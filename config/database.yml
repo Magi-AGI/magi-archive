@@ -7,9 +7,9 @@ default: &default
 production:
   <<: *default
   database: magi_archive_production
-  username: <REDACTED_DB_USER>
+  username: <%= ENV["DB_USERNAME"] %>
   password: <%= ENV["DATABASE_PASSWORD"] %>
-  host: <REDACTED_RDS_ENDPOINT>
+  host: <%= ENV["DB_HOST"] %>
   port: 5432
 
 development: &development
