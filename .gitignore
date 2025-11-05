@@ -72,3 +72,22 @@ build/
 /doc/
 /rdoc/
 backup-*.sql
+
+# Temporary migration and setup scripts (root directory only)
+/*.rb
+/*.sh
+
+# Temporary test directories
+/deck/
+
+# Editor/IDE directories
+/.obsidian/
+
+# Temporary documentation and notes
+/AGENTS.md
+/EMAIL_SETUP.md
+/DECKO-SECTION-PATTERN.md
+
+# Temporary/experimental initializers
+/config/initializers/fix_email_stylesheet.rb
+/.claude/
