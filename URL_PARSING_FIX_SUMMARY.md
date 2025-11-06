@@ -24,25 +24,34 @@ URI::DEFAULT_PARSER.make_regexp(SCHEMES).match("https://example.com—test")
 The existing trailing punctuation handler (lines 68-75) only checks single ASCII characters like `.`, `,`, `!`, etc.
 
 ## Solution
-Created a mod that extends the `Card::Content::Chunk::Uri` class using Ruby's `prepend` pattern (same approach as the UploadCacheFix).
+Two-layer fix targeting RichText rendering (actual hot path):
+
+1) Chunk extension (kept for non‑RichText contexts)
+- Extend `Card::Content::Chunk::Uri` via `prepend`, post‑processing the base match to include Unicode punctuation (em/en dashes, ellipsis) when followed by valid URI chars.
+
+2) HtmlFormat linkifier (RichText path)
+- Post‑process rendered HTML to:
+  - Auto‑link bare domains (e.g., `teamliquid.net/...`) using `https://`.
+  - Percent‑encode problematic Unicode in hrefs (U+2013/U+2014/U+2026, and other non‑RFC chars like U+00A4).
+  - Fix existing anchors’ href values (encode specials without altering visible text).
+  - Merge anchors split by adjacent URL fragments (eg. when editors insert the next URL piece like `¤tpage=3#57` as separate text/span).
 
 ### Implementation
 
-**Module**: `mod/url_fixes/lib/card/content/chunk/uri_extensions.rb`
+- Chunk module: `mod/url_fixes/lib/card/content/chunk/uri_extensions.rb`
+- Html linkifier: `mod/url_fixes/lib/url_linkifier.rb`
+- Html format patch: `mod/url_fixes/lib/html_format_url_fix.rb`
+- Initializer: `config/initializers/url_parsing_fix.rb`
 
-The `UriExtensions` module:
-1. Overrides the `interpret` method to call the original parser first
-2. After the initial parse, looks ahead to see if em-dashes or ellipses appear immediately after the matched URL
-3. If found, checks if there are more valid URI characters after the punctuation
-4. Extends the URL match to include those characters
-5. Strips actual trailing punctuation (like commas and periods at the end)
-
-**Initializer**: `config/initializers/url_parsing_fix.rb`
-
-Loads the extension and prepends it to the Uri class:
+Wiring (initializer):
 ```ruby
 Card::Content::Chunk::Uri.prepend(UriExtensions)
+Card::Format::HtmlFormat.prepend(HtmlFormatUrlFix)
 ```
+
+Notes:
+- Linkifier uses Nokogiri to scan/modify HTML safely.
+- Href normalization keeps visible text unchanged and percent‑encodes only href.
 
 ### How It Works
 
@@ -54,7 +63,7 @@ Clickable: "https://example.com"
 Non-clickable: "—awesome for info."
 ```
 
-**After Fix**:
+**After Fix (HtmlFormat)**:
 ```
 Text: "Visit https://example.com—awesome for info."
 Initial parse: "https://example.com"
@@ -64,6 +73,10 @@ Strips trailing: "."
 Final clickable URL: "https://example.com—awesome"
 Non-clickable: " for info."
 ```
+
+Also handled:
+- Split fragments merged into one anchor (e.g., `…topic_id=333480` + `¤tpage=3#57` → one link, href includes `%C2%A4`).
+- Bare: `teamliquid.net/...` → clickable with `https://`.
 
 ## Testing
 
@@ -83,11 +96,23 @@ Non-clickable: " for info."
 
 ### Verification on Production
 
-The fix is live on production as of 2025-11-06 21:07 UTC.
+The fix is live on production as of 2025-11-06.
 
 **Log confirmation**:
 ```
 === UriExtensions module prepended to Card::Content::Chunk::Uri
+[URLFIX] HtmlFormatUrlFix prepended to Card::Format::HtmlFormat
+```
+
+Enable debug (optional): set `URLFIX_DEBUG=1` in `.env.production` to log
+when HtmlFormat methods run.
+
+### Real-world Case
+```
+Input text: teamliquid.net/... ?topic_id=333480¤tpage=3#57
+Rendered:   <a href="https://teamliquid.net/...topic_id=333480%C2%A4tpage=3#57">…</a>
+```
+Note: `%C2%A4` encodes U+00A4. If the intent is a new query param, replace `¤` with `&`.
 ```
 
 **To test**:
@@ -98,19 +123,22 @@ The fix is live on production as of 2025-11-06 21:07 UTC.
 
 ## Files Modified/Created
 
-### New Files (to be committed)
-1. **`mod/url_fixes/lib/card/content/chunk/uri_extensions.rb`** - Core extension module
-2. **`config/initializers/url_parsing_fix.rb`** - Initializer to load the extension
+### New Files
+1. **`mod/url_fixes/lib/card/content/chunk/uri_extensions.rb`** - Chunk extension
+2. **`mod/url_fixes/lib/url_linkifier.rb`** - Html linkifier
+3. **`mod/url_fixes/lib/html_format_url_fix.rb`** - HtmlFormat patch
+4. **`config/initializers/url_parsing_fix.rb`** - Loads both extensions
 
 ### Documentation
 3. **`URL_PARSING_FIX_SUMMARY.md`** - This file
 
 ## Impact and Compatibility
 
-**Safe for updates**: This fix uses `prepend`, which takes precedence in Ruby's method lookup chain:
+**Safe for updates**: Both patches use `prepend`, which takes precedence in Ruby's method lookup chain:
 - If Decko fixes the bug upstream, this extension will still work (it will just be a no-op)
-- The extension only acts when it detects special punctuation
-- Includes safety check for nil `@text_range` to prevent errors
+- Chunk extension only acts when it detects special punctuation
+- Html linkifier runs only when URL-like text is detected; it percent‑encodes hrefs and leaves text untouched
+- Includes safety checks for nil ranges and empty nodes
 
 **Testing after Decko updates**:
 1. Test URLs with em-dashes and ellipses
@@ -132,9 +160,9 @@ All three fixes use the same `prepend` pattern for safe, non-invasive monkey-pat
 
 ## TODO
 
-- [ ] File issue with Decko project about em-dash/ellipsis URL parsing
-- [ ] Test with various browsers to ensure links work correctly
-- [ ] Monitor production logs for any unexpected behavior
+- [ ] Propose upstream enhancements for HtmlFormat auto-linking and Unicode support
+- [ ] Extend inline merge allowlist if other wrappers appear
+- [ ] Monitor production logs for any unexpected behavior (enable `URLFIX_DEBUG` if needed)
 
 ---
 

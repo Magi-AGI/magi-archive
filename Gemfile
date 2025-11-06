@@ -1,6 +1,7 @@
 source "http://rubygems.org"
 
 gem "decko"
+gem "nokogiri"
 
 
 # DATABASE

@@ -21,9 +21,22 @@
 
 Rails.application.config.after_initialize do
   require_relative '../../mod/url_fixes/lib/card/content/chunk/uri_extensions'
+  # HTML linkifier (RichText rendering path)
+  begin
+    require_relative '../../mod/url_fixes/lib/url_linkifier'
+    require_relative '../../mod/url_fixes/lib/html_format_url_fix'
+  rescue LoadError => e
+    Rails.logger.warn "[URLFIX] Linkifier load failed: #{e.message}"
+  end
 
   if defined?(Card::Content::Chunk::Uri)
     Card::Content::Chunk::Uri.prepend(UriExtensions)
     Rails.logger.info "=== UriExtensions module prepended to Card::Content::Chunk::Uri"
+  end
+
+  # Prepend HtmlFormat patch so RichText HTML output is post-processed
+  if defined?(Card::Format::HtmlFormat) && defined?(HtmlFormatUrlFix)
+    Card::Format::HtmlFormat.prepend(HtmlFormatUrlFix)
+    Rails.logger.info "[URLFIX] HtmlFormatUrlFix prepended to Card::Format::HtmlFormat"
   end
 end
