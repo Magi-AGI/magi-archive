@@ -1,11 +1,12 @@
 # frozen_string_literal: true
 
-# Fix for Decko URL parsing that stops at em-dashes and ellipses
+# Fix for Decko URL parsing that stops at special punctuation
 #
 # ISSUE: URLs in richtext cards get cut short when they contain:
 #        - Em-dashes (—)
+#        - En-dashes (–)
 #        - Ellipses (…)
-#        Example: "https://example.com—test" only links "https://example.com"
+#        Example: "https://example.com–test" only links "https://example.com"
 #
 # ROOT CAUSE: Ruby's URI::DEFAULT_PARSER.make_regexp stops at these characters
 #             because they're not valid URI characters. The existing trailing
@@ -23,6 +24,7 @@ module UriExtensions
   # Extended punctuation patterns that should be treated as trailing
   EXTENDED_TRAILING_PUNCTUATION = [
     "—",  # Em-dash (U+2014)
+    "–",  # En-dash (U+2013)
     "…",  # Horizontal ellipsis (U+2026)
     "...", # Three periods
   ].freeze
