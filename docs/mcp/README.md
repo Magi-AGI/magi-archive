@@ -37,3 +37,13 @@ Use `docs/mcp/scripts/health-check.mjs` to spawn the server and call `get-list-o
 - Reading page content requires explicit per‑domain consent in the extension.
 - For Docker usage and DXT packaging, follow the browser-control repository README.
 
+## Quick Start Wrappers
+
+- Copy `docs/mcp/.env.example` to `docs/mcp/.env` and set:
+  - `EXTENSION_SECRET`, optional `EXTENSION_PORT`, and `BROWSER_MCP_SERVER`
+- Windows PowerShell:
+  - `pwsh -File docs/mcp/scripts/start-server.ps1`
+  - `pwsh -File docs/mcp/scripts/health-check.ps1` (calls the Node health‑check)
+- macOS/Linux:
+  - `bash docs/mcp/scripts/start-server.sh`
+  - `node docs/mcp/scripts/health-check.mjs`
