@@ -238,8 +238,19 @@ Password: [your secure password]
 
 ```bash
 # From your local machine
-ssh -i ~/magi-archive-key.pem ubuntu@52.x.x.x
-# Replace 52.x.x.x with your Elastic IP
+# Recommended: add an SSH config so you can use `ssh magi-archive`
+# ~/.ssh/config
+#   Host magi-archive
+#     HostName 54.219.9.17
+#     User ubuntu
+#     IdentityFile ~/.ssh/magi-archive-key.pem
+#     IdentitiesOnly yes
+
+# Connect using alias
+ssh magi-archive
+
+# Or connect explicitly if you prefer flags
+ssh -i ~/.ssh/magi-archive-key.pem ubuntu@54.219.9.17
 ```
 
 If connection refused, check:

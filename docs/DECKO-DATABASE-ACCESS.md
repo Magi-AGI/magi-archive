@@ -12,20 +12,45 @@ Administrators occasionally need to run Decko/ActiveRecord scripts against the p
 
 ---
 
+## Quick Access Defaults (Production)
+
+- SSH host: 54.219.9.17 (Elastic IP)
+- SSH user: ubuntu (Ubuntu 22.04 AMI default)
+- Deck root: /home/ubuntu/magi-archive
+- SSH key: ~/.ssh/magi-archive-key.pem
+
+Tip: Add an SSH config entry so tools and future agents don’t need flags:
+
+```
+Host magi-archive
+  HostName 54.219.9.17
+  User ubuntu
+  IdentityFile ~/.ssh/magi-archive-key.pem
+  IdentitiesOnly yes
+  ServerAliveInterval 60
+```
+
+Then use `ssh magi-archive` and omit `-i` everywhere in examples.
+
 ## One-Line Command Template
 
 ```bash
-ssh -i <ssh-key> <user>@<deck-host> '
-  cd <deck-root> &&
+ssh magi-archive '
+  cd /home/ubuntu/magi-archive &&
   set -a && source .env.production && set +a &&
   PATH="/home/<user>/.rbenv/shims:$PATH" \
     script/card runner '\''YOUR_RUBY_CODE'\''
 '
 ```
 
-Replace the bracketed placeholders with safe values stored in your password manager. The key ideas are:
-- enter the deck directory (`<deck-root>`)
-- export environment variables from `.env.production`
+If not using the SSH alias, replace with explicit values:
+- ssh user/host: `ssh -i ~/.ssh/magi-archive-key.pem ubuntu@54.219.9.17`
+- deck root: `/home/ubuntu/magi-archive`
+- rbenv shims path: `/home/ubuntu/.rbenv/shims`
+
+Key ideas remain:
+- enter the deck directory
+- export environment from `.env.production`
 - prepend the rbenv shims directory to `PATH`
 - invoke `script/card runner` with correctly escaped quotes
 
@@ -35,7 +60,11 @@ Replace the bracketed placeholders with safe values stored in your password mana
 
 1. **SSH**
    ```bash
-   ssh -i <ssh-key> <user>@<deck-host>
+   # Preferred (with SSH config):
+   ssh magi-archive
+
+   # Or explicit flags:
+   ssh -i ~/.ssh/magi-archive-key.pem ubuntu@54.219.9.17
    ```
 
 2. **Deck root**
@@ -52,7 +81,7 @@ Replace the bracketed placeholders with safe values stored in your password mana
 
 4. **Expose rbenv shims**
    ```bash
-   PATH="/home/<user>/.rbenv/shims:$PATH"
+   PATH="/home/ubuntu/.rbenv/shims:$PATH"
    ```
 
 5. **Run Decko code**
