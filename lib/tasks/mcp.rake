@@ -78,7 +78,12 @@ namespace :mcp do
       end
 
       puts "✅ Created: #{created.map { |c| "#{c[:name]}(##{c[:id]})" }.join(', ')}" unless created.empty?
-      puts "ℹ️  Skipped: #{skipped.map { |s| "#{s[:name]}(#{s[:status]})" }.join(', ')}" unless skipped.empty?
+      unless skipped.empty?
+        puts "ℹ️  Skipped: #{skipped.map { |s| "#{s[:name]}(#{s[:status]})" }.join(', ')}"
+        skipped.each do |s|
+          puts "   #{s[:name]}: #{s[:error]}" if s[:error]
+        end
+      end
       puts "🔐 Role assignments: #{role_assignments.join(', ')}" unless role_assignments.empty?
     end
   end
