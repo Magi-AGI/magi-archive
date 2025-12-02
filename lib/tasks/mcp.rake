@@ -106,10 +106,21 @@ namespace :mcp do
         puts "⚠️  Warning: Administrator role not found; mcp-admin will have limited permissions"
       end
     when :gm
-      # GM role: grant read permissions but not admin
-      # In Decko, this is typically handled via custom read permissions on +GM cards
-      # For now, just track that account was created for GM purposes
-      role_assignments << "#{user_card.name} → GM (read-only)"
+      # Add to Game Master role members
+      gm_role = Card.fetch("Game Master")
+      if gm_role
+        members_card = Card.fetch("#{gm_role.name}+*members", new: {})
+        current_members = members_card.item_names || []
+
+        unless current_members.include?(user_card.name)
+          members_card.items = current_members + [user_card.name]
+          members_card.save!
+          role_assignments << "#{user_card.name} → Game Master"
+        end
+      else
+        puts "⚠️  Warning: Game Master role not found; mcp-gm will have limited permissions"
+        role_assignments << "#{user_card.name} → GM (role not found)"
+      end
     when :user
       # User role: default permissions (no special role assignment needed)
       role_assignments << "#{user_card.name} → User (default)"
