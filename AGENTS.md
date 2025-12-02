@@ -15,6 +15,7 @@
 - `script/card create "Card Name"` — scaffold a card.
 - `bundle exec thin start -R config.ru` — production-like smoke test.
 - Tests: `bundle exec rspec` or `script/decko_rspec`.
+- Remote runner (Decko host): `cd /home/ubuntu/magi-archive && set -a && . .env.production && set +a && export PATH=/home/ubuntu/.rbenv/shims:/home/ubuntu/.rbenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin && script/card runner ...` (avoids PATH/env issues when calling via SSH).
 
 ## Coding Style & Naming Conventions
 - Ruby: idiomatic, 2-space indentation, trailing newline, snake_case filenames (e.g., `mod/agents/set/self.rb`).
