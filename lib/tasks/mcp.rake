@@ -39,11 +39,17 @@ namespace :mcp do
       user_type_id = Card.fetch_id(:user)
       created = []
       skipped = []
+      role_assignments = []
+
+      # Fetch Decko role cards for assignment
+      admin_role = Card.fetch("Administrator")
 
       accounts.each do |acct|
         existing = Card[acct[:name]]
         if existing
           skipped << { name: acct[:name], id: existing.id, status: :exists }
+          # Still attempt role assignment for existing accounts
+          assign_role(existing, acct[:role], admin_role, role_assignments)
           next
         end
 
@@ -64,12 +70,47 @@ namespace :mcp do
           }
         )
         created << { name: acct[:name], id: card.id }
+
+        # Assign to appropriate Decko role
+        assign_role(card, acct[:role], admin_role, role_assignments)
       rescue StandardError => e
         skipped << { name: acct[:name], id: nil, status: :error, error: e.message }
       end
 
       puts "✅ Created: #{created.map { |c| "#{c[:name]}(##{c[:id]})" }.join(', ')}" unless created.empty?
       puts "ℹ️  Skipped: #{skipped.map { |s| "#{s[:name]}(#{s[:status]})" }.join(', ')}" unless skipped.empty?
+      puts "🔐 Role assignments: #{role_assignments.join(', ')}" unless role_assignments.empty?
     end
+  end
+
+  # Helper to assign service account to appropriate Decko role
+  def assign_role(user_card, mcp_role, admin_role, role_assignments)
+    case mcp_role
+    when :admin
+      # Add to Administrator role members
+      if admin_role
+        members_card = Card.fetch("#{admin_role.name}+*members", new: {})
+        current_members = members_card.item_names || []
+
+        unless current_members.include?(user_card.name)
+          members_card.items = current_members + [user_card.name]
+          members_card.save!
+          role_assignments << "#{user_card.name} → Administrator"
+        end
+      else
+        puts "⚠️  Warning: Administrator role not found; mcp-admin will have limited permissions"
+      end
+    when :gm
+      # GM role: grant read permissions but not admin
+      # In Decko, this is typically handled via custom read permissions on +GM cards
+      # For now, just track that account was created for GM purposes
+      role_assignments << "#{user_card.name} → GM (read-only)"
+    when :user
+      # User role: default permissions (no special role assignment needed)
+      role_assignments << "#{user_card.name} → User (default)"
+    end
+  rescue StandardError => e
+    puts "⚠️  Failed to assign role for #{user_card.name}: #{e.message}"
+  end
   end
 end

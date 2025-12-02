@@ -28,6 +28,9 @@ gem "thin"
 # The "defaults" includes a lot of functionality that is needed in standard decks.
 gem "card-mod-defaults"
 
+# MCP API dependencies
+gem "jwt" # For future RS256 JWT auth (Phase 2)
+
 
 # BACKGROUND
 # A background gem is needed to run tasks like sending notifications in a background
