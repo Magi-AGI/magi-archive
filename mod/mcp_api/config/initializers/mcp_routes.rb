@@ -7,6 +7,9 @@ Rails.application.routes.draw do
       # Auth endpoint
       post "auth", to: "auth#create"
 
+      # JWKS endpoint (public key distribution)
+      get ".well-known/jwks.json", to: "jwks#show"
+
       # Types endpoints
       get "types", to: "types#index"
       get "types/:name", to: "types#show"
@@ -20,6 +23,12 @@ Rails.application.routes.draw do
         collection do
           post :batch
         end
+      end
+
+      # Render endpoints (Phase 2)
+      namespace :render do
+        post "/", to: "render#html_to_markdown", as: :html_to_markdown
+        post "markdown", to: "render#markdown_to_html"
       end
     end
   end

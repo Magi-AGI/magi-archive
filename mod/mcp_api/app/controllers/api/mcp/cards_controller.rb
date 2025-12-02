@@ -222,38 +222,8 @@ module Api
       end
 
       def convert_markdown_to_html(markdown)
-        # Simple Markdown-to-HTML conversion preserving [[...]] links
-        # Phase 1: Basic conversion; Phase 2: Use proper markdown gem
-        html = markdown.dup
-
-        # Preserve wiki links by temporarily replacing them
-        wiki_links = {}
-        html.gsub!(/\[\[(.*?)\]\]/) do |match|
-          key = "__WIKILINK_#{wiki_links.size}__"
-          wiki_links[key] = match
-          key
-        end
-
-        # Convert basic markdown
-        html.gsub!(/^# (.+)$/, '<h1>\1</h1>')
-        html.gsub!(/^## (.+)$/, '<h2>\1</h2>')
-        html.gsub!(/^### (.+)$/, '<h3>\1</h3>')
-        html.gsub!(/\*\*(.+?)\*\*/, '<strong>\1</strong>')
-        html.gsub!(/\*(.+?)\*/, '<em>\1</em>')
-        html.gsub!(/^- (.+)$/, '<li>\1</li>')
-
-        # Wrap paragraphs
-        lines = html.split("\n").reject(&:empty?)
-        html = lines.map { |line|
-          line.match?(/^<[h\d|li]/) ? line : "<p>#{line}</p>"
-        }.join("\n")
-
-        # Restore wiki links
-        wiki_links.each do |key, link|
-          html.gsub!(key, link)
-        end
-
-        html
+        # Phase 2: Use proper kramdown-based converter
+        McpApi::MarkdownConverter.markdown_to_html(markdown)
       end
 
       def apply_patch(card, patch_params)

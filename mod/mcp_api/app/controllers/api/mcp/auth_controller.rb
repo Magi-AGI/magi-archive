@@ -59,9 +59,28 @@ module Api
       end
 
       def generate_token(role, api_key)
+        # Phase 2: Use JWT by default, fallback to MessageVerifier if JWT disabled
+        if jwt_enabled?
+          generate_jwt_token(role, api_key)
+        else
+          generate_message_verifier_token(role, api_key)
+        end
+      end
+
+      def generate_jwt_token(role, api_key)
+        # Use JWT service for RS256 signed tokens
+        McpApi::JwtService.generate_token(
+          role: role,
+          api_key_id: api_key.slice(0, 8),
+          expires_in: token_ttl
+        )
+      end
+
+      def generate_message_verifier_token(role, api_key)
+        # Fallback to MessageVerifier (Phase 1 compatibility)
         payload = {
           role: role,
-          api_key: api_key.slice(0, 8), # Store prefix only for audit
+          api_key: api_key.slice(0, 8),
           iat: Time.now.to_i,
           exp: (Time.now.to_i + token_ttl)
         }
@@ -70,9 +89,13 @@ module Api
         verifier.generate(payload)
       end
 
+      def jwt_enabled?
+        ENV.fetch("MCP_JWT_ENABLED", "true") == "true"
+      end
+
       def token_ttl
         # Default: 1 hour; configurable via ENV
-        (ENV["MCP_TOKEN_TTL"] || 3600).to_i
+        (ENV["MCP_TOKEN_TTL"] || ENV["JWT_EXPIRY"] || 3600).to_i
       end
     end
   end

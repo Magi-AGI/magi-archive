@@ -29,7 +29,9 @@ gem "thin"
 gem "card-mod-defaults"
 
 # MCP API dependencies
-gem "jwt" # For future RS256 JWT auth (Phase 2)
+gem "jwt" # RS256 JWT authentication (Phase 2)
+gem "kramdown" # Proper Markdown parsing (Phase 2)
+gem "reverse_markdown" # HTML to Markdown conversion (Phase 2)
 
 
 # BACKGROUND
