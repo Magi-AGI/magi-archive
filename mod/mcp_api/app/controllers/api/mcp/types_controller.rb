@@ -45,7 +45,7 @@ module Api
 
       def find_type_by_name(name)
         # Try exact match first
-        type_card = Card.fetch(name, skip_modules: true)
+        type_card = Card.fetch(name)
         return type_card if type_card&.type_id == Card::CardtypeID
 
         # Try case-insensitive search

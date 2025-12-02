@@ -391,11 +391,14 @@ module Api
 
           content = prepare_content(child_spec["content"], child_spec["markdown_content"])
 
-          Card.create!(
-            name: child_name,
-            type_id: type_card.id,
-            content: content
-          )
+          # Create child with service account permission context
+          Card::Auth.as(current_account.name) do
+            Card.create!(
+              name: child_name,
+              type_id: type_card.id,
+              content: content
+            )
+          end
         end
       end
 

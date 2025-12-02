@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
-# MCP API test helper
+# MCP API test helper - loaded after main spec_helper
 module McpApiTestHelper
   def generate_test_api_key
     "test-api-key-#{SecureRandom.hex(8)}"

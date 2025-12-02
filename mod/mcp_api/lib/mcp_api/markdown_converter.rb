@@ -12,9 +12,10 @@ module McpApi
         return "" if markdown.nil? || markdown.empty?
 
         # Step 1: Protect wiki links by temporarily replacing them
+        # Use HTML comment format which won't be escaped by markdown processors
         wiki_links = {}
         protected_markdown = markdown.gsub(/\[\[(.*?)\]\]/) do |match|
-          key = "__WIKILINK_#{wiki_links.size}__"
+          key = "WIKILINK#{wiki_links.size}ENDWIKI"
           wiki_links[key] = match
           key
         end
@@ -23,7 +24,7 @@ module McpApi
         doc = Kramdown::Document.new(protected_markdown, kramdown_options)
         html = doc.to_html
 
-        # Step 3: Restore wiki links
+        # Step 3: Restore wiki links (before sanitization)
         wiki_links.each do |key, link|
           html.gsub!(key, link)
         end
@@ -40,7 +41,7 @@ module McpApi
         # Step 1: Protect wiki links
         wiki_links = {}
         protected_html = html.gsub(/\[\[(.*?)\]\]/) do |match|
-          key = "__WIKILINK_#{wiki_links.size}__"
+          key = "WIKILINK#{wiki_links.size}ENDWIKI"
           wiki_links[key] = match
           key
         end
@@ -63,11 +64,12 @@ module McpApi
 
       def kramdown_options
         {
-          input: "GFM", # GitHub Flavored Markdown
+          input: "kramdown", # Use standard kramdown (GFM requires kramdown-parser-gfm gem)
           hard_wrap: false,
           auto_ids: false, # Don't generate IDs for headers
           entity_output: :as_char,
-          syntax_highlighter: nil # Disable syntax highlighting for simplicity
+          syntax_highlighter: nil, # Disable syntax highlighting for simplicity
+          gfm_quirks: [:paragraph_end] # Enable some GFM-like behavior
         }
       end
 

@@ -2,11 +2,10 @@
 
 module Api
   module Mcp
-    class BaseController < ApplicationController
+    class BaseController < ::ActionController::Base
       include RateLimitable
 
       # Disable CSRF for API endpoints
-      skip_before_action :verify_authenticity_token
 
       # Authentication for all MCP API endpoints (except auth)
       before_action :authenticate_mcp_request!, unless: :auth_endpoint?
@@ -16,7 +15,7 @@ module Api
       private
 
       def auth_endpoint?
-        controller_name == "auth"
+        ["auth", "jwks"].include?(controller_name)
       end
 
       def authenticate_mcp_request!

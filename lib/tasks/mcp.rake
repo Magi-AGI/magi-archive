@@ -113,4 +113,3 @@ namespace :mcp do
     puts "⚠️  Failed to assign role for #{user_card.name}: #{e.message}"
   end
   end
-end

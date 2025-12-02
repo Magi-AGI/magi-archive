@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative '../../mcp_api/engine'
+
 module Card
   module Mod
     module McpApi

@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe Api::Mcp::JwksController, type: :request do
+RSpec.describe "JWKS Endpoint", type: :request do
   describe "GET /api/mcp/.well-known/jwks.json" do
     it "returns JWKS without authentication" do
       get "/api/mcp/.well-known/jwks.json"
