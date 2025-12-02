@@ -1647,6 +1647,420 @@ Each faction will have the same structure but different intro paragraph content 
 
 ---
 
-**Last Updated**: 2025-12-01
+### Phase 13: Major Species Card Structure (BG_Species Cardtype)
+
+**Date Added**: 2025-12-02
+**Context**: Creating BG_Species cardtype and migrating first Major Species (Human) following Phase 12 organizational patterns.
+
+#### The Pattern: Species Organizational Structure
+
+Major Species cards follow the same modular organizational pattern as Major Factions (Phase 12), adapted for species-specific content:
+
+**Main Card Structure**:
+- +intro and +appeal (separate reusable cards)
+- 3 images interspersed throughout
+- Three organizational sections:
+  1. **+Subspecies** (biological/environmental adaptations)
+  2. **+Factions** (where species has demographic/cultural dominance)
+  3. **+Cultures** (which cultures species demographically dominates)
+
+**Key Difference from Factions**: Species focus on biological adaptation and cultural participation rather than diplomatic relations and military structures.
+
+#### Step 1: Create BG_Species Cardtype
+
+```ruby
+Card::Auth.as_bot do
+  species_type = Card.fetch("BG_Species", new: { type_id: Card.fetch("Cardtype").id })
+
+  if species_type.save
+    puts "✓ Created BG_Species cardtype (ID: #{species_type.id})"
+  else
+    puts "✗ Failed: #{species_type.errors.full_messages.join(', ')}"
+  end
+end
+```
+
+**Result**: Created BG_Species cardtype (ID: 2936)
+
+#### Step 2: Create BG_Species+*default Template
+
+**Template Structure** (no "Species Appeal" header, just +appeal inclusion):
+
+```ruby
+Card::Auth.as_bot do
+  richtext_type = Card.fetch("RichText")
+
+  default_content = <<~HTML
+    <h1>Species Name</h1>
+    <p>[[_L|Major Species]]</p>
+    <div style="text-align:center;">{{+image 1|view:content;type:image;size:large;margin:auto}}</div>
+    <p>{{+intro|view:content}}</p>
+    <div style="text-align:center;">{{+image 2|view:content;type:image;size:large;margin:auto}}</div>
+    <p>{{+appeal|view:content}}</p>
+    <div style="text-align:center;">{{+image 3|view:content;type:image;size:large;margin:auto}}</div>
+    <hr>
+    <h4>[[+Subspecies|Subspecies]]</h4>
+    <p>{{+Subspecies+intro|view:content}}</p>
+    <p>{{+Subspecies+table-of-contents|view:content}}</p>
+    <hr>
+    <h4>[[+Factions|Factions]]</h4>
+    <p>{{+Factions+intro|view:content}}</p>
+    <p>{{+Factions+table-of-contents|view:content}}</p>
+    <hr>
+    <h4>[[+Cultures|Cultures]]</h4>
+    <p>{{+Cultures+intro|view:content}}</p>
+    <p>{{+Cultures+table-of-contents|view:content}}</p>
+    <hr>
+    <p> </p>
+    <p>{{+table-of-contents|view:closed;title:Table of Contents}}</p>
+    <p> </p>
+    <p>{{+AI|view:closed;title:AI}}</p>
+    <p>{{+GM|view:closed;title:GM}}</p>
+    <p>{{+tags|view:closed;title:Tags;type:pointer}}</p>
+    <p> </p>
+    <p>Back to [[_L|Major Species]]</p>
+  HTML
+
+  default_card = Card.fetch("BG_Species+*default", new: { type_id: richtext_type.id })
+  default_card.content = default_content.strip
+  default_card.save
+end
+```
+
+**Result**: Created BG_Species+*default (ID: 2937, 1,090 chars)
+
+**Key Template Features**:
+- NO "Species Appeal" header (unlike factions which have "Faction Appeal")
+- Three organizational sections (not five like factions)
+- Same modular pattern with separate intro cards
+- Centered images using `<div style="text-align:center;">`
+
+#### Step 3: Update Major_Species Parent Card
+
+```ruby
+Card::Auth.as_bot do
+  major_species = Card.fetch("Games+Butterfly Galaxii+Player+Species+Major Species")
+
+  major_species.content = <<~HTML
+    <h1>Major Species</h1>
+    <p>{{+table-of-contents|content}}</p>
+    <p>Back to [[Games+Butterfly Galaxii+Player+Species|Species]]</p>
+  HTML
+
+  major_species.save
+end
+```
+
+**Pattern**: Matches Major_Factions parent structure (simple h1 + TOC inclusion + back link)
+
+#### Step 4: Migrate First Species (Human)
+
+**Source Material Priority**:
+1. **Primary**: `/docs/games/butterfly-galaxii/player/species/major-species/human/intro.md` (10KB)
+2. **Secondary**: `/docs/games/butterfly-galaxii/gm/cultures/major-species/human-gm.md` (35KB)
+3. **Tertiary**: `/deko-card-drafts/archived/Culture-Human-Majority_Player.md` (subspecies list)
+4. **Critical**: Recent culture and faction work takes precedence over old archived files
+
+**Content Extraction Strategy**:
+- **+intro**: From "Academic Context" section (brief species overview)
+- **+appeal**: From "Why Play a Human?" section (player motivation, 4 paragraphs)
+- **+Subspecies**: 10 environmental adaptations from Culture-Human-Majority file
+- **+Factions**: List 4 factions where humans have demographic/cultural dominance
+- **+Cultures**: List 6 cultures where humans are demographically dominant
+
+#### Human Species Card Structure (36+ Cards Total)
+
+**Main Species Cards (5)**:
+1. **Main card** (BG_Species type, 1,054 chars) - Uses template, embeds all sections
+2. **+intro** (RichText, 437 chars) - Species description
+3. **+appeal** (RichText, 1,388 chars) - Why play this species
+4. **+table-of-contents** (RichText) - Lists 3 organizational sections
+5. **+tags** (Pointer) - `Butterfly Galaxii`, `Major Species`, `Human`
+
+**Subspecies Section (16 cards)**:
+6. **+Subspecies** (RichText) - Full standalone card
+7. **+Subspecies+intro** (RichText, 1,509 chars) - Explains biological adaptations and cultural crossover
+8. **+Subspecies+table-of-contents** (RichText) - Links to 10 subspecies cards
+9. **+Subspecies+AI** (RichText) - Extended lore placeholder
+10. **+Subspecies+GM** (RichText) - GM secrets placeholder
+11. **+Subspecies+tags** (Pointer) - `Butterfly Galaxii`, `Human`, `Subspecies`
+12-21. **+Subspecies+[Name]** (10 RichText cards) - Individual subspecies:
+    - Microgravity-Adapted
+    - Hypergravity-Adapted
+    - High-Radiation-Adapted
+    - Low-Radiation-Adapted
+    - High-Pressure-Adapted
+    - Low-Pressure-Adapted
+    - Cryogenic-Adapted
+    - Thermal-Adapted
+    - Hydro-Adapted
+    - Arid-Adapted
+
+**Factions Section (6 cards)**:
+22. **+Factions** (RichText) - Full standalone card
+23. **+Factions+intro** (RichText, 879 chars) - Emphasizes presence in ALL 10 factions, dominance in 4
+24. **+Factions+table-of-contents** (RichText) - Links to 4 dominant factions
+25. **+Factions+AI** (RichText) - Extended lore placeholder
+26. **+Factions+GM** (RichText) - GM secrets placeholder
+27. **+Factions+tags** (Pointer) - `Butterfly Galaxii`, `Human`, `Factions`
+
+**Cultures Section (6 cards)**:
+28. **+Cultures** (RichText) - Full standalone card
+29. **+Cultures+intro** (RichText, 1,236 chars) - Emphasizes near-universal presence, dominance in 6
+30. **+Cultures+table-of-contents** (RichText) - Links to 6 dominant cultures
+31. **+Cultures+AI** (RichText) - Extended lore placeholder
+32. **+Cultures+GM** (RichText) - GM secrets placeholder
+33. **+Cultures+tags** (Pointer) - `Butterfly Galaxii`, `Human`, `Cultures`
+
+**Metadata Cards (3)**:
+34. **+AI** (RichText) - Extended species lore placeholder
+35. **+GM** (RichText) - GM secrets placeholder
+36. **+image 1, +image 2, +image 3** (Image) - Species imagery (ongoing work)
+
+**Total: 36+ cards per species** (26 organizational + 10 subspecies cards)
+
+#### Human Species Content Details
+
+**+intro** (437 chars):
+> Humans are the most plentiful species in both galaxies, numbering in the hundreds of trillions. Considered generalists by galactic standards, Humans excel through versatility rather than specialization. Their lifespans and abilities set the baseline average, making them the reference point for newly discovered species. Despite cycles of divergence and collapse, humans maintain their defining characteristic: adaptability.
+
+**+appeal** (1,388 chars - 4 paragraphs):
+- **You are everywhere** - Never the outsider, understand unspoken rules
+- **You are the bridge** - Translate between specialists, adaptability as superpower
+- **You contain multitudes** - Human nature allows all character types
+- **Touch the manifold** - Rare psionic abilities make you unpredictable
+
+**+Subspecies+intro** (1,509 chars):
+Explains 10 environmental adaptations (Microgravity-Adapted, Hypergravity-Adapted, etc.) with cultural context. Key principle: biological subspecies crosscut cultural affiliations—any subspecies may practice any human culture. Avoids "planet of hats" trope.
+
+**+Factions+intro** (879 chars):
+Lists 4 dominant factions (Coalition of Planets, Obsidian Empire, Seventh Syndicate, Nova Rebellion) while emphasizing humans appear in ALL 10 factions. Focuses on where humans have demographic and cultural dominance.
+
+**+Cultures+intro** (1,236 chars):
+Lists 6 dominant cultures (Itzalaan, Kovana, Netsugo, Haelaryn, Thoren-Kav, Daresh-Tral) while noting humans participate in virtually all major cultures. Only notable absence: Vesh-Shival (Zynx biological interface culture requiring scent, pheromone, bioluminescence capabilities humans lack).
+
+#### Implementation Workflow
+
+**Step 1: Create Main Species Card**:
+```ruby
+Card::Auth.as_bot do
+  human = Card.fetch(
+    "Games+Butterfly Galaxii+Player+Species+Major Species+Human",
+    new: { type_id: Card.fetch("BG_Species").id }
+  )
+
+  # Apply template content manually (template doesn't auto-populate in Decko)
+  human.content = <<~HTML
+    <h1>Human</h1>
+    <p>[[_L|Major Species]]</p>
+    [... full template structure ...]
+  HTML
+
+  human.save
+end
+```
+
+**IMPORTANT**: Unlike cardtypes that auto-populate, BG_Species cards need template content explicitly applied. 0-length content indicates missing template application.
+
+**Step 2: Create +intro and +appeal Cards**:
+```ruby
+intro = Card.fetch("#{base}+intro", new: { type_id: richtext_type.id })
+intro.content = "[species description from intro.md]"
+intro.save
+
+appeal = Card.fetch("#{base}+appeal", new: { type_id: richtext_type.id })
+appeal.content = "[4 paragraphs from 'Why Play' section]"
+appeal.save
+```
+
+**Step 3: Create Organizational Sections**:
+
+Each organizational section (Subspecies, Factions, Cultures) follows same pattern:
+1. Create full standalone organizational card
+2. Create +intro subcard (contextual paragraph)
+3. Create +table-of-contents subcard (numbered list, links only)
+4. Create +AI and +GM subcards (placeholders)
+5. Create +tags subcard (hierarchical pointer)
+
+**Step 4: Create Subspecies Individual Cards**:
+```ruby
+subspecies_list.each do |name|
+  card = Card.fetch("#{base}+Subspecies+#{name}", new: { type_id: richtext_type.id })
+  card.content = "<p>#{name} humans are adapted to specific environmental conditions. [Content to be added]</p>"
+  card.save
+end
+```
+
+**Step 5: Create Hierarchical Tags**:
+```ruby
+# Main species tags
+main_tags = Card.fetch("#{base}+tags", new: { type_id: pointer_type.id })
+main_tags.content = "Butterfly Galaxii\nMajor Species\nHuman"
+main_tags.save
+
+# Organizational section tags
+subspecies_tags = Card.fetch("#{base}+Subspecies+tags", new: { type_id: pointer_type.id })
+subspecies_tags.content = "Butterfly Galaxii\nHuman\nSubspecies"
+subspecies_tags.save
+```
+
+#### Key Lessons Learned
+
+**1. Source Material Priority Is Critical**:
+- Always check `/docs/` intro files first (most up-to-date player-facing)
+- Then GM files for extended lore
+- Then archived Culture-Species files for historical reference
+- Recent culture/faction work supersedes old archived files
+
+**2. Biological vs. Cultural Distinction**:
+- Subspecies are biological/environmental adaptations
+- Cultures are practiced traditions (crosscut subspecies)
+- AVOID 1:1 correspondence (planet of hats trope)
+- Example: Microgravity-Adapted humans may practice Daresh-Tral OR Thoren-Kav cultures
+
+**3. TOC Structure - Links Only**:
+- Table-of-contents cards contain ONLY numbered lists with wiki links
+- NO inline descriptions or summaries
+- ALL context goes in +intro paragraphs
+- This keeps TOCs clean and context separate
+
+**4. Dominance vs. Presence**:
+- For ubiquitous species (humans), list where they DOMINATE, not where they appear
+- Emphasize in intro that they appear everywhere
+- Example: Humans in 4 dominant factions (but present in all 10)
+- Example: Humans in 6 dominant cultures (but present in nearly all)
+
+**5. Template Content Must Be Applied**:
+- BG_Species cardtype doesn't auto-populate main card content
+- 0-length content = missing template application (ERROR)
+- Must manually apply template HTML to main card after creating with BG_Species type
+
+**6. Subspecies Need Individual Cards**:
+- Each subspecies gets its own placeholder card
+- TOC links to actual subspecies cards (not just list items)
+- Enables future expansion with full subspecies content
+
+**7. Notable Absences Are Valuable**:
+- Document where species does NOT appear
+- Example: Humans absent from Vesh-Shival (Zynx biological interface culture)
+- Absence tells story (biological limitations, cultural restrictions)
+
+#### Pattern Consistency Check
+
+**Matches BG_Faction Pattern**:
+| Feature | BG_Faction | BG_Species (Human) |
+|---------|-----------|-------------------|
+| Cardtype exists | ✅ | ✅ |
+| Default template used | ✅ | ✅ |
+| +intro separate | ✅ | ✅ |
+| +appeal separate | ✅ | ✅ |
+| No appeal header | ❌ (has "Faction Appeal") | ✅ (no header) |
+| Organizational sections | 5 (Subfactions, Relations, Species, Cultures, +1) | 3 (Subspecies, Factions, Cultures) |
+| Each section has +intro | ✅ | ✅ |
+| Each section has +TOC | ✅ | ✅ |
+| Each section has +AI/+GM | ✅ | ✅ |
+| Each section has +tags | ✅ | ✅ |
+| Hierarchical tags | ✅ | ✅ |
+| Images interspersed | ✅ (3) | ✅ (3) |
+| Total organizational cards | 25 | 26 |
+| Individual subcards | Subfactions vary | +10 subspecies |
+| Total cards per instance | 25+ | 36+ |
+
+**Approved Differences**:
+1. ✅ No "Species Appeal" header (just +appeal inclusion)
+2. ✅ Three sections instead of five (Subspecies, Factions, Cultures)
+3. ✅ +Subspecies instead of +Subfactions
+4. ✅ +Factions lists where species dominates (inverse of faction's +Species)
+5. ✅ Individual subspecies cards created as placeholders
+
+#### Verification Checklist
+
+After migrating a species:
+
+**Main Card**:
+- [ ] Main card has BG_Species type
+- [ ] Main card has template content applied (NOT 0-length)
+- [ ] +intro card exists with species description
+- [ ] +appeal card exists with "Why Play" content
+- [ ] +tags pointer exists with hierarchical tags
+- [ ] +table-of-contents lists 3 organizational sections
+
+**Subspecies Section**:
+- [ ] +Subspecies full standalone card created
+- [ ] +Subspecies+intro has contextual paragraph (biological + cultural crossover)
+- [ ] +Subspecies+table-of-contents has links to individual subspecies cards
+- [ ] Individual subspecies cards created (10+ cards)
+- [ ] +Subspecies+tags pointer exists
+
+**Factions Section**:
+- [ ] +Factions full standalone card created
+- [ ] +Factions+intro emphasizes presence everywhere, dominance in subset
+- [ ] +Factions+table-of-contents lists dominant factions only
+- [ ] +Factions+tags pointer exists
+
+**Cultures Section**:
+- [ ] +Cultures full standalone card created
+- [ ] +Cultures+intro emphasizes near-universal presence, dominance in subset
+- [ ] +Cultures+table-of-contents lists dominant cultures only
+- [ ] +Cultures+intro mentions notable absences (if any)
+- [ ] +Cultures+tags pointer exists
+
+**All Sections**:
+- [ ] TOCs contain ONLY links (no inline descriptions)
+- [ ] ALL context in +intro paragraphs
+- [ ] +AI and +GM placeholders created
+- [ ] URLs render correctly in production
+
+#### Remaining Species to Migrate (10 Total)
+
+**With Good Documentation**:
+1. ✅ Human (complete - 36+ cards)
+2. ⏳ Eldarai (has Culture-Eldarai-Species files + intro.md)
+3. ⏳ Jinshkar (has Culture-Jinshkar-Species files)
+4. ⏳ Machinax (has Culture-Machinax-Species files)
+5. ⏳ Inhimisu (has Culture-Inhimisu-Species files)
+6. ⏳ Silhouene (has Culture-Silhouene-Species files)
+
+**Need to Locate Source Files**:
+7. ⏳ Oathari (check for intro.md or Culture-Oathari files)
+8. ⏳ Naxom (check for intro.md or Culture-Naxom files)
+9. ⏳ Chlorosynx (check for intro.md)
+10. ⏳ Zynx (check for intro.md)
+
+**Additional Species** (check Major_Species TOC for completeness):
+11. ⏳ Vyvaskyn (has subspecies folder)
+
+#### Future Enhancement Tasks
+
+**For Human Species**:
+1. ⏳ Add images (+image 1, +image 2, +image 3) when available
+2. ⏳ Populate +AI card with extended lore from human-gm.md
+3. ⏳ Populate +GM card with GM secrets from human-gm.md
+4. ⏳ Populate +Subspecies+AI with subspecies lore
+5. ⏳ Populate +Factions+AI with factional distribution details
+6. ⏳ Populate +Cultures+AI with cultural participation details
+7. ⏳ Expand individual subspecies cards with full content
+
+**Pattern Replication**:
+- Use Human species as prototype for remaining 10 species
+- Adapt content for species-specific biological traits
+- Adjust faction/culture dominance lists per species
+- Create species-specific subspecies (not all will have 10 environmental adaptations)
+
+#### Production URLs
+
+**Human Species Cards**:
+- **Main**: https://magi-archive.fly.dev/Games+Butterfly_Galaxii+Player+Species+Major_Species+Human
+- **Subspecies**: https://magi-archive.fly.dev/Games+Butterfly_Galaxii+Player+Species+Major_Species+Human+Subspecies
+- **Factions**: https://magi-archive.fly.dev/Games+Butterfly_Galaxii+Player+Species+Major_Species+Human+Factions
+- **Cultures**: https://magi-archive.fly.dev/Games+Butterfly_Galaxii+Player+Species+Major_Species+Human+Cultures
+- **Microgravity-Adapted**: https://magi-archive.fly.dev/Games+Butterfly_Galaxii+Player+Species+Major_Species+Human+Subspecies+Microgravity-Adapted
+
+**Template Reference**:
+- **BG_Species Template**: https://magi-archive.fly.dev/BG_Species+*default
+
+---
+
+**Last Updated**: 2025-12-02
 **Author**: AI Agent (Claude Sonnet 4.5)
-**Context**: Butterfly Galaxii Major Cultures and Major Factions upload process
+**Context**: Butterfly Galaxii Major Cultures, Major Factions, and Major Species upload process
