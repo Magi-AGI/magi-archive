@@ -310,3 +310,28 @@ See `magi-archive-mcp/CLAUDE.md` for detailed implementation guide.
 - **API Spec**: `MCP-SPEC.md`
 - **Implementation**: `docs/MCP-PHASE-2-COMPLETE.md`
 - **This Status**: `docs/MCP-DEPLOYMENT-STATUS.md`
+
+---
+
+## Updates (Post-Deployment)
+
+### 2025-12-02: Game Master Role Assignment
+
+**Issue Identified**: The `mcp-gm` account was not properly assigned to the "Game Master" role despite the rake task completing successfully.
+
+**Root Cause**: The `assign_role` helper in `lib/tasks/mcp.rake` was only logging that mcp-gm was assigned GM permissions but not actually adding the account to the "Game Master+*members" card.
+
+**Fix Applied**:
+1. Manually added `mcp-gm` to Game Master role members ✅
+2. Updated `lib/tasks/mcp.rake` to properly fetch and assign the "Game Master" role ✅
+3. Verified role assignment through web interface ✅
+4. Tested API access with GM token ✅
+
+**Commit**: 92d4850
+
+**Current Status**: 
+- `mcp-user` → User (default permissions) ✅
+- `mcp-gm` → **Game Master role** ✅ (FIXED)
+- `mcp-admin` → Administrator role ✅
+
+All three service accounts are now properly configured with their intended roles.
