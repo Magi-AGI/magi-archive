@@ -36,7 +36,7 @@ namespace :mcp do
     end
 
     Card::Auth.as_bot do
-      user_type_id = Card.fetch_id(:user)
+      user_type_id = Card.fetch("User").id
       created = []
       skipped = []
       role_assignments = []
