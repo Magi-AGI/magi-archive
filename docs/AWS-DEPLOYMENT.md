@@ -156,7 +156,7 @@ With free tier: **$0-5/month** for first year!
 
 Once created, note these values:
 ```
-Endpoint: magi-archive-db.xxxxxxxxxx.us-east-1.rds.amazonaws.com
+Endpoint: magi-archive-db.cz6yeqqqqs2l.us-west-1.rds.amazonaws.com
 Port: 5432
 Database name: magi_archive_production
 Username: decko_admin
@@ -216,7 +216,7 @@ Password: [your secure password]
 4. Instance: Select `magi-archive-web`
 5. Click **Associate**
 
-**Note the Elastic IP**: `52.x.x.x` (example)
+**Note the Elastic IP**: `54.219.9.17'
 
 #### 3.3 Configure Security Groups
 
@@ -238,8 +238,19 @@ Password: [your secure password]
 
 ```bash
 # From your local machine
-ssh -i ~/magi-archive-key.pem ubuntu@52.x.x.x
-# Replace 52.x.x.x with your Elastic IP
+# Recommended: add an SSH config so you can use `ssh magi-archive`
+# ~/.ssh/config
+#   Host magi-archive
+#     HostName 54.219.9.17
+#     User ubuntu
+#     IdentityFile ~/.ssh/magi-archive-key.pem
+#     IdentitiesOnly yes
+
+# Connect using alias
+ssh magi-archive
+
+# Or connect explicitly if you prefer flags
+ssh -i ~/.ssh/magi-archive-key.pem ubuntu@54.219.9.17
 ```
 
 If connection refused, check:

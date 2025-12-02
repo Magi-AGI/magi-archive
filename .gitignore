@@ -72,3 +72,26 @@ build/
 /doc/
 /rdoc/
 backup-*.sql
+
+# Temporary migration and setup scripts (root directory only)
+/*.rb
+/*.sh
+
+# Temporary test directories
+/deck/
+
+# Editor/IDE directories
+/.obsidian/
+
+# Documentation and notes (keep in repo)
+# Previously ignored to reduce noise; now tracked intentionally.
+# Do NOT include secrets.
+\# Local MCP env (ignore secrets)
+docs/mcp/.env
+
+# Temporary/experimental initializers
+/config/initializers/fix_email_stylesheet.rb
+/.claude/
+ 
+# Local temporary scratch directory
+temp/
