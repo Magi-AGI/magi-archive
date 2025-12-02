@@ -3,13 +3,14 @@
 **Date**: 2025-12-02
 **Server**: magi-archive EC2 (54.219.9.17)
 **Branch**: feature/mcp-api-phase2
-**Commit**: 067ac26
+**Commit**: bac5113
+**Status**: ✅ **FULLY OPERATIONAL**
 
 ---
 
 ## Deployment Summary
 
-The MCP API Phase 2 implementation is **deployed and functional** on the production server. All critical security fixes have been applied and committed.
+The MCP API Phase 2 implementation is **fully deployed and operational** on the production server. All security fixes have been applied, service accounts created, and comprehensive testing completed successfully.
 
 ### ✅ What's Working
 
@@ -28,11 +29,25 @@ The MCP API Phase 2 implementation is **deployed and functional** on the product
    - Manual controller loading in routes.rb
    - Deck runner working with wrapper script
 
-4. **Endpoints Active**:
-   - `GET /.well-known/jwks.json` → Requires JWT keys (expected)
-   - `POST /auth` → Requires JWT keys (expected)
-   - `GET /types` → Requires authentication (working as designed)
-   - `GET /cards` → Requires authentication (working as designed)
+4. **Service Accounts Configured**: ✅
+   - `mcp-user` → User role (default permissions)
+   - `mcp-gm` → GM role (read-only)
+   - `mcp-admin` → Administrator role (full access)
+
+5. **JWT Authentication Operational**: ✅
+   - RS256 token signing with 2048-bit RSA keys
+   - JWKS public key distribution at `/.well-known/jwks.json`
+   - Role-based token issuance (user/gm/admin)
+   - 1-hour token expiry with refresh capability
+
+6. **API Endpoints Verified**: ✅
+   - `GET /.well-known/jwks.json` → Returns public JWK ✅
+   - `POST /auth` → Returns JWT tokens for all roles ✅
+   - `GET /types` → Returns 42 card types ✅
+   - `GET /cards` → Returns paginated card lists (2939 total) ✅
+   - `GET /cards/:name` → Returns individual card details ✅
+
+7. **Smoke Tests**: 3/3 PASSED ✅
 
 ---
 
@@ -81,22 +96,20 @@ The MCP API Phase 2 implementation is **deployed and functional** on the product
 
 ---
 
-## Configuration Required
+## Configuration Completed ✅
 
-The only blocker to full functionality is **JWT key configuration**:
+All required configuration has been successfully applied:
 
-### Generate JWT Keys
+### JWT Keys Generated ✅
 
 ```bash
-cd /home/ubuntu/magi-archive
-openssl genrsa -out config/jwt_private.pem 2048
-openssl rsa -in config/jwt_private.pem -pubout -out config/jwt_public.pem
-chmod 600 config/jwt_private.pem
+/home/ubuntu/magi-archive/config/jwt_private.pem  # 2048-bit RSA private key
+/home/ubuntu/magi-archive/config/jwt_public.pem   # RSA public key
 ```
 
-### Update Environment Variables
+### Environment Variables Configured ✅
 
-Add to `/home/ubuntu/magi-archive/.env.production`:
+In `/home/ubuntu/magi-archive/.env.production`:
 
 ```bash
 JWT_PRIVATE_KEY_PATH=/home/ubuntu/magi-archive/config/jwt_private.pem
@@ -104,53 +117,100 @@ JWT_PUBLIC_KEY_PATH=/home/ubuntu/magi-archive/config/jwt_public.pem
 JWT_KEY_ID=prod-key-001
 JWT_ISSUER=magi-archive
 MCP_JWT_ENABLED=true
-MCP_API_KEY=<generate-secure-key>
+MCP_API_KEY=cc633b97eb69fc93cf77a0874e9340be1dbdb62342fcfefcd2c285fea780b649
+
+# Service Account Credentials
+MCP_USER_NAME=mcp-user
+MCP_USER_EMAIL=mcp-user@magi-agi.org
+MCP_USER_PASSWORD=[secure-password]
+MCP_GM_NAME=mcp-gm
+MCP_GM_EMAIL=mcp-gm@magi-agi.org
+MCP_GM_PASSWORD=[secure-password]
+MCP_ADMIN_NAME=mcp-admin
+MCP_ADMIN_EMAIL=mcp-admin@magi-agi.org
+MCP_ADMIN_PASSWORD=[secure-password]
 ```
 
-### Restart Service
+### Service Accounts Created ✅
 
-```bash
-sudo systemctl restart magi-archive
-```
+Accounts manually created via Decko web interface and approved by admin:
+- `mcp-user` - User role
+- `mcp-gm` - GM role
+- `mcp-admin` - Administrator role
+
+Roles assigned via `rake mcp:setup_roles` task.
 
 ---
 
-## Testing the Deployment
+## Testing Results ✅
 
-### Using the Smoke Test Script
-
-Once JWT keys are configured:
+### Smoke Test Script Results
 
 ```bash
 cd /home/ubuntu/magi-archive
-export MCP_API_KEY="your-api-key"
-bin/smoke_test_mcp.rb
+ruby bin/smoke_test_mcp.rb http://localhost:3000/api/mcp "$MCP_API_KEY"
 ```
 
-Expected output:
+**Results**: 3/3 PASSED ✅
+
 ```
-✓ JWKS Endpoint (Public)
-  JWKS structure valid
-✓ Authentication
-  Token received
-✓ Types Endpoint
-  Found 50+ types
+============================================================
+MCP API Smoke Test
+Base URL: http://localhost:3000/api/mcp
+============================================================
+
+Testing JWKS Endpoint (Public)...   JWKS structure valid
+PASS
+Testing Authentication...   Token received
+PASS
+Testing Types (Authenticated)...   Types: 42
+PASS
+
+============================================================
+Results: 3/3 passed
 ```
 
-### Manual Endpoint Testing
+### Manual Endpoint Testing Results ✅
+
+All endpoints verified with manual testing:
 
 ```bash
-# Test JWKS (should return JWT public keys after config)
+# JWKS Endpoint ✅
 curl http://localhost:3000/api/mcp/.well-known/jwks.json
+# Returns: {"keys":[{"kty":"RSA","kid":"prod-key-001",...}]}
 
-# Test auth (should return JWT token)
+# Authentication - User Role ✅
 curl -X POST http://localhost:3000/api/mcp/auth \
   -H "Content-Type: application/json" \
-  -d '{"api_key":"YOUR_API_KEY","role":"user"}'
+  -d '{"api_key":"cc633b97...","role":"user"}'
+# Returns: {"token":"eyJraWQiOi...","role":"user","expires_in":3600}
 
-# Test types (should require Bearer token)
-curl http://localhost:3000/api/mcp/types \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+# Authentication - GM Role ✅
+curl -X POST http://localhost:3000/api/mcp/auth \
+  -H "Content-Type: application/json" \
+  -d '{"api_key":"cc633b97...","role":"gm"}'
+# Returns: Valid JWT token for GM role
+
+# Authentication - Admin Role ✅
+curl -X POST http://localhost:3000/api/mcp/auth \
+  -H "Content-Type: application/json" \
+  -d '{"api_key":"cc633b97...","role":"admin"}'
+# Returns: Valid JWT token for admin role
+
+# Types Endpoint ✅
+curl http://localhost:3000/api/mcp/types?limit=5 \
+  -H "Authorization: Bearer $USER_TOKEN"
+# Returns: 42 card types with pagination
+
+# Cards Listing ✅
+curl http://localhost:3000/api/mcp/cards?limit=3 \
+  -H "Authorization: Bearer $USER_TOKEN"
+# Returns: {"cards":[...],"total":2939,"limit":3,"offset":0}
+
+# Single Card Retrieval ✅
+curl http://localhost:3000/api/mcp/cards/User \
+  -H "Authorization: Bearer $USER_TOKEN"
+# Returns: Full card details including content and metadata
 ```
 
 ---
@@ -217,13 +277,30 @@ git pull origin feature/mcp-api-phase2
 
 ---
 
-## Next Steps
+## Deployment Complete ✅
 
-1. **Generate JWT Keys** - Run the openssl commands above
-2. **Configure Environment** - Update `.env.production` with JWT paths
-3. **Restart Server** - `sudo systemctl restart magi-archive`
-4. **Run Smoke Tests** - `bin/smoke_test_mcp.rb`
-5. **Document API Key** - Store `MCP_API_KEY` securely for client use
+All deployment steps have been successfully completed:
+
+1. ✅ **JWT Keys Generated** - 2048-bit RSA key pair created
+2. ✅ **Environment Configured** - All variables set in `.env.production`
+3. ✅ **Service Accounts Created** - mcp-user, mcp-gm, mcp-admin
+4. ✅ **Roles Assigned** - Administrator role for mcp-admin
+5. ✅ **Service Restarted** - magi-archive.service running
+6. ✅ **Smoke Tests Passed** - 3/3 endpoints verified
+7. ✅ **Manual Testing Complete** - All roles and endpoints operational
+
+## Next Phase: MCP Client Implementation
+
+With the API fully operational, the next step is implementing the Ruby MCP client as specified in `MCP-SPEC.md`:
+
+1. **Scaffold Ruby Gem** - `bundle gem magi-archive-mcp` in `magi-archive-mcp/` directory
+2. **Implement JWT Client** - JWKS fetching, token verification, refresh logic
+3. **Create HTTP Client** - Wrapper for Decko API calls with role enforcement
+4. **Implement MCP Tools** - `get_card`, `search_cards`, `create_card`, etc.
+5. **Add RSpec Tests** - Unit and integration tests for all components
+6. **Create Example Scripts** - Demonstrate usage for AI agents
+
+See `magi-archive-mcp/CLAUDE.md` for detailed implementation guide.
 
 ---
 
