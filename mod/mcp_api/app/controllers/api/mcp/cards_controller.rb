@@ -64,7 +64,9 @@ module Api
       # PATCH /api/mcp/cards/:name
       # Update existing card
       def update
-        return render_forbidden_gm_content unless can_modify_card?(@card)
+        unless can_modify_card?(@card)
+          return render_forbidden_gm_content
+        end
 
         Card::Auth.as(current_account.name) do
           if params[:patch]
@@ -79,6 +81,8 @@ module Api
         render json: card_full_json(@card)
       rescue ActiveRecord::RecordInvalid => e
         render_error("validation_error", "Update failed", { errors: e.record.errors.full_messages })
+      rescue ArgumentError => e
+        render_error("validation_error", e.message)
       end
 
       # DELETE /api/mcp/cards/:name
@@ -96,9 +100,14 @@ module Api
       # GET /api/mcp/cards/:name/children
       # List children cards
       def children
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        unless can_view_card?(@card)
+          return render_forbidden_gm_content
+        end
 
-        children_cards = @card.children.select { |c| can_view_card?(c) }
+        # Fetch children with proper permission context
+        children_cards = Card::Auth.as(current_account.name) do
+          @card.children.select { |c| c.ok?(:read) }
+        end
 
         render json: {
           parent: @card.name,
@@ -139,25 +148,34 @@ module Api
 
         unless @card
           render_error("not_found", "Card '#{name}' not found", {}, status: :not_found)
+          return false # Abort execution
         end
+
+        true
       end
 
       def check_admin_role!
         unless current_role == "admin"
           render_forbidden("Only admin role can delete cards")
+          return false # Abort execution
         end
-      end
-
-      def can_view_card?(card)
-        # User role cannot see GM or AI content
-        return false if current_role == "user" && (card.name.include?("+GM") || card.name.include?("+AI"))
 
         true
       end
 
+      def can_view_card?(card)
+        # Use Decko's permission system to check read access
+        Card::Auth.as(current_account.name) do
+          card.ok?(:read)
+        end
+      end
+
       def can_modify_card?(card)
-        # Same rules as viewing for now
-        can_view_card?(card)
+        # Use Decko's permission system to check update access
+        # Admin and GM can update, but user role has restrictions
+        Card::Auth.as(current_account.name) do
+          card.ok?(:update)
+        end
       end
 
       def render_forbidden_gm_content
@@ -170,8 +188,13 @@ module Api
       def build_search_query
         query = {}
 
-        query[:name] = ["match", params[:q]] if params[:q]
-        query[:name] = ["starts_with", params[:prefix]] if params[:prefix]
+        # Handle name filters - prefix takes precedence if both provided
+        if params[:prefix]
+          query[:name] = ["starts_with", params[:prefix]]
+        elsif params[:q]
+          query[:name] = ["match", params[:q]]
+        end
+
         query[:type] = params[:type] if params[:type]
 
         if params[:not_name]
@@ -180,11 +203,17 @@ module Api
           query[:not] = { name: ["like", pattern] }
         end
 
-        if params[:updated_since]
+        # Handle date range filters - combine if both provided
+        if params[:updated_since] && params[:updated_before]
+          # Both range bounds - use BETWEEN
+          query[:updated_at] = [
+            "BETWEEN",
+            Time.parse(params[:updated_since]),
+            Time.parse(params[:updated_before])
+          ]
+        elsif params[:updated_since]
           query[:updated_at] = [">=", Time.parse(params[:updated_since])]
-        end
-
-        if params[:updated_before]
+        elsif params[:updated_before]
           query[:updated_at] = ["<=", Time.parse(params[:updated_before])]
         end
 
@@ -192,18 +221,21 @@ module Api
       end
 
       def execute_search(query, limit, offset)
-        cards = Card.search(query.merge(limit: limit, offset: offset))
+        # Execute search with proper permission context
+        Card::Auth.as(current_account.name) do
+          cards = Card.search(query.merge(limit: limit, offset: offset))
 
-        # Filter out GM/AI content for user role
-        if current_role == "user"
-          cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
-        else
-          cards
+          # Filter by Decko permissions - only return cards user can read
+          cards.select { |c| c.ok?(:read) }
         end
       end
 
       def count_search_results(query)
-        Card.search(query.merge(return: "count"))
+        # Count with proper permission context - only count cards user can read
+        Card::Auth.as(current_account.name) do
+          cards = Card.search(query)
+          cards.select { |c| c.ok?(:read) }.count
+        end
       end
 
       def find_type_by_name(name)
@@ -233,7 +265,7 @@ module Api
         when "replace_between"
           apply_replace_between(card, patch_params)
         else
-          render_error("validation_error", "Unknown patch mode: #{mode}")
+          raise ArgumentError, "Unknown patch mode: #{mode}"
         end
       end
 
@@ -241,19 +273,20 @@ module Api
         start_marker = patch_params[:start_marker]
         end_marker = patch_params[:end_marker]
         replacement = patch_params[:replacement_html]
-        end_inclusive = patch_params[:end_inclusive] != false
+        # Default end_inclusive to false per spec
+        end_inclusive = patch_params.key?(:end_inclusive) ? patch_params[:end_inclusive] : false
 
         content = card.content
         start_idx = content.index(start_marker)
 
         unless start_idx
-          return render_error("validation_error", "Start marker not found", { marker: start_marker })
+          raise ArgumentError, "Start marker not found: #{start_marker}"
         end
 
         end_idx = content.index(end_marker, start_idx + start_marker.length)
 
         unless end_idx
-          return render_error("validation_error", "End marker not found", { marker: end_marker })
+          raise ArgumentError, "End marker not found: #{end_marker}"
         end
 
         # Adjust end index based on end_inclusive flag
@@ -323,6 +356,10 @@ module Api
         card = Card.fetch(name)
 
         return { status: "error", name: name, message: "Card not found" } unless card
+
+        # Check permission before attempting update
+        can_update = Card::Auth.as(current_account.name) { card.ok?(:update) }
+        return { status: "error", name: name, message: "Permission denied" } unless can_update
 
         Card::Auth.as(current_account.name) do
           if op["patch"]

@@ -79,9 +79,33 @@ module McpApi
       end
 
       def sanitize_html(html)
-        # Remove script and style tags (basic XSS prevention)
-        sanitized = html.gsub(/<script\b[^>]*>.*?<\/script>/im, "")
-        sanitized.gsub(/<style\b[^>]*>.*?<\/style>/im, "")
+        # Use Rails' built-in sanitization for comprehensive XSS prevention
+        # Allows safe HTML tags and attributes, strips script tags, javascript: URLs,
+        # inline event handlers, and other XSS vectors
+        ActionController::Base.helpers.sanitize(html, tags: allowed_tags, attributes: allowed_attributes)
+      end
+
+      def allowed_tags
+        # Decko-safe HTML tags
+        %w[
+          p br div span h1 h2 h3 h4 h5 h6
+          ul ol li dl dt dd
+          strong em b i u s strike del ins
+          a img
+          blockquote pre code
+          table thead tbody tr th td
+          hr
+        ]
+      end
+
+      def allowed_attributes
+        # Decko-safe HTML attributes (no javascript: URLs or event handlers)
+        %w[
+          href src alt title
+          class id
+          colspan rowspan
+          width height
+        ]
       end
     end
   end

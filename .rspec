@@ -2,5 +2,3 @@
 --profile
 --backtrace
 // --format documentation
---default-path '/home/ubuntu/magi-archive/mod'
---require '/home/ubuntu/magi-archive/spec/spec_helper'

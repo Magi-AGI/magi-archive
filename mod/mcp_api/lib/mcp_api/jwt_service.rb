@@ -67,8 +67,11 @@ module McpApi
           key_path = ENV["JWT_PRIVATE_KEY_PATH"]
           if key_path && File.exist?(key_path)
             OpenSSL::PKey::RSA.new(File.read(key_path))
+          elsif Rails.env.production?
+            # Fail fast in production - require configured keys
+            raise "JWT_PRIVATE_KEY_PATH must be set and point to a valid key file in production"
           else
-            # Generate ephemeral key if no key file (development only)
+            # Generate ephemeral key if no key file (development/test only)
             Rails.logger.warn("No JWT private key found; generating ephemeral key (not for production!)")
             generate_key_pair[:private]
           end
@@ -80,8 +83,11 @@ module McpApi
           key_path = ENV["JWT_PUBLIC_KEY_PATH"]
           if key_path && File.exist?(key_path)
             OpenSSL::PKey::RSA.new(File.read(key_path))
+          elsif Rails.env.production?
+            # Fail fast in production - require configured keys
+            raise "JWT_PUBLIC_KEY_PATH must be set and point to a valid key file in production"
           else
-            # Use public key from private key
+            # Use public key from private key (development/test only)
             private_key.public_key
           end
         end

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# Mount MCP API routes
-Rails.application.routes.draw do
+# Mount MCP API routes - append to existing routes instead of redrawing
+Rails.application.routes.append do
   namespace :api do
     namespace :mcp do
       # Auth endpoint

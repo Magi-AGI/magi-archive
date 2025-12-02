@@ -46,7 +46,7 @@ gem "reverse_markdown" # HTML to Markdown conversion (Phase 2)
 # You can also create your own mods. Mod developers (or "Monkeys") will want some
 # additional gems to support development and testing.
 # gem "card-mod-monkey", group: :development
-# gem "decko-rspec", group: :test
+gem "decko-rspec", group: :test
 # gem "decko-cucumber", group: :cucumber
 # gem "decko-cypress", group: :cypress
 # gem "decko-profile", group: :profile
