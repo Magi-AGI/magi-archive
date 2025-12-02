@@ -144,7 +144,7 @@ module Api
 
       def set_card
         name = params[:name]
-        @card = Card.fetch(name, skip_modules: true)
+        @card = Card.fetch(name)
 
         unless @card
           render_error("not_found", "Card '#{name}' not found", {}, status: :not_found)
@@ -239,7 +239,7 @@ module Api
       end
 
       def find_type_by_name(name)
-        type_card = Card.fetch(name, skip_modules: true)
+        type_card = Card.fetch(name)
         return type_card if type_card&.type_id == Card::CardtypeID
 
         Card.search(type: "Cardtype", name: ["match", name]).first
