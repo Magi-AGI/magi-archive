@@ -142,6 +142,11 @@ Card::Auth.as_bot do
 end
 ```
 
+### Markdown content cards and titles
+
+- Markdown intro and content cards should **not** repeat the card title as a top‑level `#` heading. Decko already renders the card name above the body, so adding a `# Title` line at the top of the content will duplicate the heading.
+- For longer research documents (for example, MAGUS research cards under `Notes+MAGUS Research`), treat the Decko card as a Markdown mirror of a canonical `.md` file in `magi-knowledge-repo` when possible. Maintaining the primary copy in a file makes it easier to preserve newlines, code fences, and headings, and to restore formatting if it is ever damaged.
+
 ---
 
 ## Complete Example: Creating a New Section
