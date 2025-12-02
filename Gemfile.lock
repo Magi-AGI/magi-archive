@@ -517,6 +517,7 @@ PLATFORMS
 DEPENDENCIES
   card-mod-defaults
   decko
+  nokogiri
   pg (~> 1.5)
   thin
 

@@ -16,18 +16,22 @@ module MagiArchive
     # Learn more about Rails email configuration:
     #  https://guides.rubyonrails.org/configuring.html#configuring-action-mailer
     #
-    config.action_mailer.perform_deliveries = false
-    # config.action_mailer.delivery_method  = ...
-    # config.action_mailer.smtp_settings    = ...
-    #
-    # Example configuration for mailcatcher, a simple development-friendly
-    # smtp server (but not an option for production sites):
-    #
-    # config.action_mailer.delivery_method = :smtp
-    # config.action_mailer.smtp_settings = { address: "localhost", port: 1025 }
-    #
-    # Learn more about mailcatcher:
-    #   http://mailcatcher.me for more information
+    config.action_mailer.perform_deliveries = true
+    config.action_mailer.raise_delivery_errors = true
+    config.action_mailer.delivery_method = :smtp
+    config.action_mailer.default_url_options = {
+      host: ENV['MAILER_HOST'] || 'localhost:3000',
+      protocol: ENV['MAILER_PROTOCOL'] || 'http'
+    }
+    config.action_mailer.smtp_settings = {
+      address: ENV['SMTP_ADDRESS'] || 'localhost',
+      port: ENV['SMTP_PORT'] || 587,
+      domain: ENV['SMTP_DOMAIN'] || 'localhost',
+      user_name: ENV['SMTP_USERNAME'],
+      password: ENV['SMTP_PASSWORD'],
+      authentication: ENV['SMTP_AUTHENTICATION'] || 'plain',
+      enable_starttls_auto: true
+    }
 
     # CACHING
     # Cards make heavy use of caching to improve performance. Caching storage

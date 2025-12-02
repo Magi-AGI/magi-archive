@@ -64,9 +64,14 @@ module UploadCacheFix
     base_dir = upload_cache_card.tmp_upload_dir
     db_content = action.card_changes&.detect { |c| c.field.to_s == "db_content" }&.value
 
+    # For images, CarrierWave creates multiple versions (original, medium, etc.)
+    # For files, it just stores the original
+    ext = File.extname(action.comment.to_s)
+
     candidates = [
       File.join(base_dir, "#{action.id}.pdf"),
-      File.join(base_dir, "#{action.id}#{File.extname(action.comment.to_s)}"),
+      File.join(base_dir, "#{action.id}#{ext}"),
+      File.join(base_dir, "#{action.id}-original#{ext}"),  # Images use -original suffix
     ]
     candidates << File.join(base_dir, File.basename(db_content)) if db_content
 
@@ -90,5 +95,10 @@ Rails.application.config.after_initialize do
   if defined?(Card::Set::Type::File)
     Card::Set::Type::File.prepend(UploadCacheFix)
     Rails.logger.info "=== UploadCacheFix module prepended to Card::Set::Type::File"
+  end
+
+  if defined?(Card::Set::Type::Image)
+    Card::Set::Type::Image.prepend(UploadCacheFix)
+    Rails.logger.info "=== UploadCacheFix module prepended to Card::Set::Type::Image"
   end
 end
