@@ -335,3 +335,81 @@ See `magi-archive-mcp/CLAUDE.md` for detailed implementation guide.
 - `mcp-admin` → Administrator role ✅
 
 All three service accounts are now properly configured with their intended roles.
+
+---
+
+### 2025-12-02: CRITICAL SECURITY FIX - Role Authentication
+
+**SECURITY VULNERABILITY IDENTIFIED**: Anyone with the API key could request admin or GM tokens just by specifying the role parameter. The `allowed_role_for_key?()` method always returned `true`, meaning no authentication was required for elevated roles.
+
+**Impact**:
+- ⚠️ **Critical** - Anyone with the API key had full admin access
+- Could delete cards, modify content, access all GM content
+- No audit trail of who requested elevated access
+
+**Root Cause**:
+The auth controller had a placeholder implementation:
+```ruby
+def allowed_role_for_key?(api_key, role)
+  # For MVP: Single API key has access to all roles
+  true  # ⚠️ ALWAYS RETURNS TRUE
+end
+```
+
+**Security Fix Implemented**:
+
+1. **User Role** (API key only):
+   ```json
+   POST /api/mcp/auth
+   {"api_key": "...", "role": "user"}
+   ```
+   - No change - API key sufficient for basic access
+
+2. **GM Role** (requires credentials):
+   ```json
+   POST /api/mcp/auth
+   {
+     "api_key": "...",
+     "role": "gm",
+     "username": "mcp-gm",
+     "password": "Mcpe8bc9b202e226e070fdf562d!Gm"
+   }
+   ```
+   - Now requires username + password
+   - Authenticates using Decko's `Card::Auth.authenticate`
+   - Verifies user is in "Game Master" role members
+
+3. **Admin Role** (requires credentials):
+   ```json
+   POST /api/mcp/auth
+   {
+     "api_key": "...",
+     "role": "admin",
+     "username": "mcp-admin",
+     "password": "Mcpa30f1950765721d153d70ee0!Admin"
+   }
+   ```
+   - Now requires username + password
+   - Authenticates using Decko's `Card::Auth.authenticate`
+   - Verifies user is in "Administrator" role members
+
+**Implementation Details**:
+- Added `authenticate_user(username, password, role)` method
+- Added `verify_user_role(user, expected_role)` method
+- Removed insecure `allowed_role_for_key?()` placeholder
+- Uses Decko's built-in password hashing and verification
+- Checks account status is "active"
+- Validates role membership before issuing tokens
+
+**Verification Tests**: 5/5 PASSED ✅
+- ✅ User role works with API key only
+- ✅ GM role rejected without credentials
+- ✅ Admin role rejected without credentials
+- ✅ GM role works with valid credentials
+- ✅ Admin role works with valid credentials
+
+**Commit**: df90d57
+
+**Status**: ✅ **SECURITY FIX DEPLOYED AND VERIFIED**
+
+Only authorized individuals with service account credentials can now obtain GM or admin access tokens. The API key alone only grants user-level access.
