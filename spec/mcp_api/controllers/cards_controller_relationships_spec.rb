@@ -206,10 +206,12 @@ RSpec.describe Api::Mcp::CardsController, "relationships", type: :request do
         expect(result).to eq([referer_card])
       end
 
-      it "falls back to content search if method not available" do
+      it "falls back to content search with regex pattern" do
         allow(main_card).to receive(:respond_to?).with(:referers).and_return(false)
-        allow(Card).to receive(:search).with(
-          content: ["match", "[[Main Page]]"],
+
+        # Verify regex pattern is used instead of simple string match
+        expect(Card).to receive(:search).with(
+          content: ["match", "\\[\\[Main\\ Page(?:\\|[^\\]]+)?\\]\\]"],
           limit: 100
         ).and_return([referer_card])
 
@@ -217,6 +219,59 @@ RSpec.describe Api::Mcp::CardsController, "relationships", type: :request do
         result = controller.send(:fetch_referers, main_card)
 
         expect(result).to eq([referer_card])
+      end
+
+      it "prevents false positives in link matching" do
+        # Card named "Apple" should not match "Apple Pie"
+        apple_card = create_test_card("Apple")
+        apple_pie_card = create_test_card("Apple Pie")
+
+        allow(apple_card).to receive(:respond_to?).with(:referers).and_return(false)
+
+        # The regex should match [[Apple]] or [[Apple|Display]] but NOT [[Apple Pie]]
+        expect(Card).to receive(:search).with(
+          content: ["match", "\\[\\[Apple(?:\\|[^\\]]+)?\\]\\]"],
+          limit: 100
+        ).and_return([referer_card])
+
+        controller = Api::Mcp::CardsController.new
+        result = controller.send(:fetch_referers, apple_card)
+
+        # Should only return cards with exact [[Apple]] or [[Apple|...]], not [[Apple Pie]]
+        expect(result).to eq([referer_card])
+      end
+
+      it "handles piped links in pattern" do
+        allow(main_card).to receive(:respond_to?).with(:referers).and_return(false)
+
+        # Pattern should match both [[Main Page]] and [[Main Page|Display Text]]
+        # The regex (?:\|[^\]]+)? makes the pipe and display text optional
+        expect(Card).to receive(:search).with(
+          content: ["match", "\\[\\[Main\\ Page(?:\\|[^\\]]+)?\\]\\]"],
+          limit: 100
+        ).and_return([referer_card])
+
+        controller = Api::Mcp::CardsController.new
+        result = controller.send(:fetch_referers, main_card)
+
+        expect(result).to eq([referer_card])
+      end
+
+      it "escapes special regex characters in card names" do
+        # Card with special chars: "My (Special) Card [Test]"
+        special_card = create_test_card("My (Special) Card [Test]")
+        allow(special_card).to receive(:respond_to?).with(:referers).and_return(false)
+
+        # Should escape regex special chars: ( ) [ ] etc.
+        expect(Card).to receive(:search).with(
+          content: ["match", "\\[\\[My\\ \\(Special\\)\\ Card\\ \\[Test\\](?:\\|[^\\]]+)?\\]\\]"],
+          limit: 100
+        ).and_return([])
+
+        controller = Api::Mcp::CardsController.new
+        result = controller.send(:fetch_referers, special_card)
+
+        expect(result).to eq([])
       end
 
       it "returns empty array on error" do
@@ -241,6 +296,81 @@ RSpec.describe Api::Mcp::CardsController, "relationships", type: :request do
 
         expect(result).to include(referer_card)
         expect(result).to include(nested_card)
+      end
+    end
+
+    describe "#fetch_nested_in" do
+      it "uses Decko's nested_in method if available" do
+        allow(main_card).to receive(:respond_to?).with(:nested_in).and_return(true)
+        allow(main_card).to receive(:nested_in).and_return([nested_card])
+
+        controller = Api::Mcp::CardsController.new
+        result = controller.send(:fetch_nested_in, main_card)
+
+        expect(result).to eq([nested_card])
+      end
+
+      it "falls back to content search with regex pattern" do
+        allow(main_card).to receive(:respond_to?).with(:nested_in).and_return(false)
+        allow(main_card).to receive(:respond_to?).with(:includees).and_return(false)
+
+        # Verify regex pattern is used instead of simple string match
+        expect(Card).to receive(:search).with(
+          content: ["match", "\\{\\{Main\\ Page\\}\\}"],
+          limit: 100
+        ).and_return([nested_card])
+
+        controller = Api::Mcp::CardsController.new
+        result = controller.send(:fetch_nested_in, main_card)
+
+        expect(result).to eq([nested_card])
+      end
+
+      it "prevents false positives in nest matching" do
+        # Card named "Template" should not match "Template Builder"
+        template_card = create_test_card("Template")
+
+        allow(template_card).to receive(:respond_to?).with(:nested_in).and_return(false)
+        allow(template_card).to receive(:respond_to?).with(:includees).and_return(false)
+
+        # The regex should match {{Template}} exactly, NOT {{Template Builder}}
+        expect(Card).to receive(:search).with(
+          content: ["match", "\\{\\{Template\\}\\}"],
+          limit: 100
+        ).and_return([nested_card])
+
+        controller = Api::Mcp::CardsController.new
+        result = controller.send(:fetch_nested_in, template_card)
+
+        # Should only return cards with exact {{Template}}, not {{Template Builder}}
+        expect(result).to eq([nested_card])
+      end
+
+      it "escapes special regex characters in card names" do
+        # Card with special chars that need escaping in regex
+        special_card = create_test_card("My {Special} Card")
+        allow(special_card).to receive(:respond_to?).with(:nested_in).and_return(false)
+        allow(special_card).to receive(:respond_to?).with(:includees).and_return(false)
+
+        # Should escape regex special chars: { } etc.
+        expect(Card).to receive(:search).with(
+          content: ["match", "\\{\\{My\\ \\{Special\\}\\ Card\\}\\}"],
+          limit: 100
+        ).and_return([])
+
+        controller = Api::Mcp::CardsController.new
+        result = controller.send(:fetch_nested_in, special_card)
+
+        expect(result).to eq([])
+      end
+
+      it "returns empty array on error" do
+        allow(main_card).to receive(:respond_to?).with(:nested_in).and_raise(StandardError)
+
+        controller = Api::Mcp::CardsController.new
+        result = controller.send(:fetch_nested_in, main_card)
+
+        expect(result).to eq([])
       end
     end
 

@@ -490,7 +490,12 @@ module Api
           card.referers
         else
           # Fallback: search for cards containing references to this card
-          Card.search(content: ["match", "[[#{card.name}]]"], limit: 100)
+          # Use regex to match complete link syntax and prevent false positives
+          # Matches: [[CardName]] or [[CardName|Display Text]]
+          # Does NOT match [[CardName Suffix]] (prevents "Apple" matching "Apple Pie")
+          escaped_name = Regexp.escape(card.name)
+          link_pattern = "\\[\\[#{escaped_name}(?:\\|[^\\]]+)?\\]\\]"
+          Card.search(content: ["match", link_pattern], limit: 100)
         end
       rescue StandardError
         []
@@ -505,7 +510,12 @@ module Api
           card.includees
         else
           # Fallback: search for cards containing nest syntax {{cardname}}
-          Card.search(content: ["match", "{{#{card.name}}}"], limit: 100)
+          # Use regex to match complete nest syntax and prevent false positives
+          # Matches: {{CardName}} exactly
+          # Does NOT match {{CardName Suffix}} (prevents "Apple" matching "Apple Pie")
+          escaped_name = Regexp.escape(card.name)
+          nest_pattern = "\\{\\{#{escaped_name}\\}\\}"
+          Card.search(content: ["match", nest_pattern], limit: 100)
         end
       rescue StandardError
         []
