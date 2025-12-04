@@ -137,7 +137,9 @@ module Api
           errors << "This card type requires child cards: #{required_children.join(', ')}"
         elsif required_children.any?
           missing_required = required_children.reject do |child_pattern|
-            children_names.any? { |name| name.match?(Regexp.new(child_pattern)) }
+            # Convert pattern like "*background" to regex that matches "CardName+background"
+            pattern_regex = child_pattern_to_regex(child_pattern, card_name)
+            children_names.any? { |name| name.match?(pattern_regex) }
           end
 
           if missing_required.any?
@@ -148,7 +150,9 @@ module Api
         # Check suggested children
         if suggested_children.any? && has_children
           missing_suggested = suggested_children.reject do |child_pattern|
-            children_names.any? { |name| name.match?(Regexp.new(child_pattern)) }
+            # Convert pattern like "*background" to regex that matches "CardName+background"
+            pattern_regex = child_pattern_to_regex(child_pattern, card_name)
+            children_names.any? { |name| name.match?(pattern_regex) }
           end
 
           if missing_suggested.any?
@@ -381,7 +385,12 @@ module Api
 
       def analyze_card_and_suggest_improvements(card)
         card_type = card.type_name
-        existing_children = card.children.map(&:name)
+        # Get existing children using left_id (Decko parent-child relationship)
+        existing_children = if card.id
+                              Card.where(left_id: card.id).map(&:name)
+                            else
+                              []
+                            end
         existing_tags = extract_tags_from_card(card)
 
         requirements = get_type_requirements(card_type)
@@ -397,7 +406,8 @@ module Api
 
         # Check for missing required children
         (requirements[:required_children] || []).each do |child_pattern|
-          unless existing_children.any? { |name| name.match?(Regexp.new(child_pattern)) }
+          pattern_regex = child_pattern_to_regex(child_pattern, card.name)
+          unless existing_children.any? { |name| name.match?(pattern_regex) }
             improvements[:missing_children] << {
               pattern: child_pattern,
               suggestion: "#{card.name}+#{child_pattern.gsub('*', '')}",
@@ -408,7 +418,8 @@ module Api
 
         # Check for missing suggested children
         (requirements[:suggested_children] || []).each do |child_pattern|
-          unless existing_children.any? { |name| name.match?(Regexp.new(child_pattern)) }
+          pattern_regex = child_pattern_to_regex(child_pattern, card.name)
+          unless existing_children.any? { |name| name.match?(pattern_regex) }
             improvements[:suggested_additions] << {
               pattern: child_pattern,
               suggestion: "#{card.name}+#{child_pattern.gsub('*', '')}",
@@ -530,6 +541,25 @@ module Api
         tags.empty? ? content.split(/[\n,]/).map(&:strip).reject(&:empty?) : tags
       rescue StandardError
         []
+      end
+
+      def child_pattern_to_regex(child_pattern, card_name = nil)
+        # Convert pattern like "*background" to regex that matches "CardName+background"
+        # The asterisk (*) in patterns is a wildcard for the parent card name
+        if child_pattern.start_with?("*")
+          # Pattern like "*background" should match any "Something+background"
+          suffix = Regexp.escape(child_pattern[1..])
+          if card_name
+            # If we have card name, match specifically "CardName+suffix"
+            Regexp.new("^#{Regexp.escape(card_name)}\\+#{suffix}$")
+          else
+            # Without card name, match any "...+suffix"
+            Regexp.new("\\+#{suffix}$")
+          end
+        else
+          # Pattern doesn't start with *, treat as literal (escape special chars)
+          Regexp.new("^#{Regexp.escape(child_pattern)}$")
+        end
       end
     end
   end
