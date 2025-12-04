@@ -5,9 +5,6 @@ module Api
     class BaseController < ActionController::API
       include RateLimitable
 
-      # Disable CSRF for API endpoints
-      skip_before_action :verify_authenticity_token
-
       # Authentication for all MCP API endpoints (except auth)
       before_action :authenticate_mcp_request!, unless: :auth_endpoint?
 
