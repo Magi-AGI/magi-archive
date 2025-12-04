@@ -2,7 +2,7 @@
 
 module Api
   module Mcp
-    class BaseController < ApplicationController
+    class BaseController < ActionController::API
       include RateLimitable
 
       # Disable CSRF for API endpoints
@@ -48,6 +48,21 @@ module Api
       end
 
       def find_mcp_account(payload)
+        # Extract actual user account from JWT sub claim
+        # Format: "user:AccountName" or "user:Username+*account"
+        subject = payload["sub"]
+        return nil unless subject
+
+        # Extract account name from "user:AccountName" format
+        if subject.start_with?("user:")
+          account_name = subject.sub(/^user:/, "")
+          # Strip +*account suffix to get User card instead of RichText subcard
+          account_name = account_name.sub(/\+\*account$/, "")
+          account = Card[account_name]
+          return account if account
+        end
+
+        # Fallback to service accounts if actual user not found
         account_name = case payload["role"]
                        when "user"
                          ENV.fetch("MCP_USER_NAME", "mcp-user")
