@@ -2,10 +2,11 @@
 
 module Api
   module Mcp
-    class BaseController < ::ActionController::Base
+    class BaseController < ApplicationController
       include RateLimitable
 
       # Disable CSRF for API endpoints
+      skip_before_action :verify_authenticity_token
 
       # Authentication for all MCP API endpoints (except auth)
       before_action :authenticate_mcp_request!, unless: :auth_endpoint?
@@ -15,7 +16,7 @@ module Api
       private
 
       def auth_endpoint?
-        ["auth", "jwks"].include?(controller_name)
+        controller_name == "auth"
       end
 
       def authenticate_mcp_request!
@@ -39,22 +40,9 @@ module Api
       end
 
       def verify_token(token)
-        # Phase 2: Try JWT first, fallback to MessageVerifier for backward compatibility
-        verify_jwt_token(token) || verify_message_verifier_token(token)
-      end
-
-      def verify_jwt_token(token)
-        McpApi::JwtService.verify_token(token)
-      rescue StandardError => e
-        Rails.logger.debug("JWT verification failed: #{e.message}")
-        nil
-      end
-
-      def verify_message_verifier_token(token)
         verifier = Rails.application.message_verifier(:mcp_auth)
         verifier.verify(token)
-      rescue ActiveSupport::MessageVerifier::InvalidSignature, ArgumentError => e
-        Rails.logger.debug("MessageVerifier failed: #{e.message}")
+      rescue ActiveSupport::MessageVerifier::InvalidSignature, ArgumentError
         nil
       end
 

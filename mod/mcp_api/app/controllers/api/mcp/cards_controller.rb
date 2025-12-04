@@ -3,7 +3,7 @@
 module Api
   module Mcp
     class CardsController < BaseController
-      before_action :set_card, only: [:show, :update, :destroy, :children]
+      before_action :set_card, only: [:show, :update, :destroy, :children, :referers, :nested_in, :nests, :links, :linked_by]
       before_action :check_admin_role!, only: [:destroy]
 
       # GET /api/mcp/cards
@@ -64,9 +64,7 @@ module Api
       # PATCH /api/mcp/cards/:name
       # Update existing card
       def update
-        unless can_modify_card?(@card)
-          return render_forbidden_gm_content
-        end
+        return render_forbidden_gm_content unless can_modify_card?(@card)
 
         Card::Auth.as(current_account.name) do
           if params[:patch]
@@ -81,8 +79,6 @@ module Api
         render json: card_full_json(@card)
       rescue ActiveRecord::RecordInvalid => e
         render_error("validation_error", "Update failed", { errors: e.record.errors.full_messages })
-      rescue ArgumentError => e
-        render_error("validation_error", e.message)
       end
 
       # DELETE /api/mcp/cards/:name
@@ -100,19 +96,84 @@ module Api
       # GET /api/mcp/cards/:name/children
       # List children cards
       def children
-        unless can_view_card?(@card)
-          return render_forbidden_gm_content
-        end
+        return render_forbidden_gm_content unless can_view_card?(@card)
 
-        # Fetch children with proper permission context
-        children_cards = Card::Auth.as(current_account.name) do
-          @card.children.select { |c| c.ok?(:read) }
-        end
+        children_cards = @card.children.select { |c| can_view_card?(c) }
 
         render json: {
           parent: @card.name,
           children: children_cards.map { |c| card_summary_json(c) },
           child_count: children_cards.size
+        }
+      end
+
+      # GET /api/mcp/cards/:name/referers
+      # List cards that reference/link to this card
+      def referers
+        return render_forbidden_gm_content unless can_view_card?(@card)
+
+        referer_cards = fetch_referers(@card).select { |c| can_view_card?(c) }
+
+        render json: {
+          card: @card.name,
+          referers: referer_cards.map { |c| card_summary_json(c) },
+          referer_count: referer_cards.size
+        }
+      end
+
+      # GET /api/mcp/cards/:name/nested_in
+      # List cards that nest/include this card
+      def nested_in
+        return render_forbidden_gm_content unless can_view_card?(@card)
+
+        nesting_cards = fetch_nested_in(@card).select { |c| can_view_card?(c) }
+
+        render json: {
+          card: @card.name,
+          nested_in: nesting_cards.map { |c| card_summary_json(c) },
+          nested_in_count: nesting_cards.size
+        }
+      end
+
+      # GET /api/mcp/cards/:name/nests
+      # List cards that this card nests/includes
+      def nests
+        return render_forbidden_gm_content unless can_view_card?(@card)
+
+        nested_cards = fetch_nests(@card).select { |c| can_view_card?(c) }
+
+        render json: {
+          card: @card.name,
+          nests: nested_cards.map { |c| card_summary_json(c) },
+          nests_count: nested_cards.size
+        }
+      end
+
+      # GET /api/mcp/cards/:name/links
+      # List cards that this card links to
+      def links
+        return render_forbidden_gm_content unless can_view_card?(@card)
+
+        linked_cards = fetch_links(@card).select { |c| can_view_card?(c) }
+
+        render json: {
+          card: @card.name,
+          links: linked_cards.map { |c| card_summary_json(c) },
+          links_count: linked_cards.size
+        }
+      end
+
+      # GET /api/mcp/cards/:name/linked_by
+      # List cards that link to this card
+      def linked_by
+        return render_forbidden_gm_content unless can_view_card?(@card)
+
+        linking_cards = fetch_linked_by(@card).select { |c| can_view_card?(c) }
+
+        render json: {
+          card: @card.name,
+          linked_by: linking_cards.map { |c| card_summary_json(c) },
+          linked_by_count: linking_cards.size
         }
       end
 
@@ -144,38 +205,29 @@ module Api
 
       def set_card
         name = params[:name]
-        @card = Card.fetch(name)
+        @card = Card.fetch(name, skip_modules: true)
 
         unless @card
           render_error("not_found", "Card '#{name}' not found", {}, status: :not_found)
-          return false # Abort execution
         end
-
-        true
       end
 
       def check_admin_role!
         unless current_role == "admin"
           render_forbidden("Only admin role can delete cards")
-          return false # Abort execution
         end
+      end
+
+      def can_view_card?(card)
+        # User role cannot see GM or AI content
+        return false if current_role == "user" && (card.name.include?("+GM") || card.name.include?("+AI"))
 
         true
       end
 
-      def can_view_card?(card)
-        # Use Decko's permission system to check read access
-        Card::Auth.as(current_account.name) do
-          card.ok?(:read)
-        end
-      end
-
       def can_modify_card?(card)
-        # Use Decko's permission system to check update access
-        # Admin and GM can update, but user role has restrictions
-        Card::Auth.as(current_account.name) do
-          card.ok?(:update)
-        end
+        # Same rules as viewing for now
+        can_view_card?(card)
       end
 
       def render_forbidden_gm_content
@@ -188,13 +240,8 @@ module Api
       def build_search_query
         query = {}
 
-        # Handle name filters - prefix takes precedence if both provided
-        if params[:prefix]
-          query[:name] = ["starts_with", params[:prefix]]
-        elsif params[:q]
-          query[:name] = ["match", params[:q]]
-        end
-
+        query[:name] = ["match", params[:q]] if params[:q]
+        query[:name] = ["starts_with", params[:prefix]] if params[:prefix]
         query[:type] = params[:type] if params[:type]
 
         if params[:not_name]
@@ -203,17 +250,11 @@ module Api
           query[:not] = { name: ["like", pattern] }
         end
 
-        # Handle date range filters - combine if both provided
-        if params[:updated_since] && params[:updated_before]
-          # Both range bounds - use BETWEEN
-          query[:updated_at] = [
-            "BETWEEN",
-            Time.parse(params[:updated_since]),
-            Time.parse(params[:updated_before])
-          ]
-        elsif params[:updated_since]
+        if params[:updated_since]
           query[:updated_at] = [">=", Time.parse(params[:updated_since])]
-        elsif params[:updated_before]
+        end
+
+        if params[:updated_before]
           query[:updated_at] = ["<=", Time.parse(params[:updated_before])]
         end
 
@@ -221,25 +262,22 @@ module Api
       end
 
       def execute_search(query, limit, offset)
-        # Execute search with proper permission context
-        Card::Auth.as(current_account.name) do
-          cards = Card.search(query.merge(limit: limit, offset: offset))
+        cards = Card.search(query.merge(limit: limit, offset: offset))
 
-          # Filter by Decko permissions - only return cards user can read
-          cards.select { |c| c.ok?(:read) }
+        # Filter out GM/AI content for user role
+        if current_role == "user"
+          cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
+        else
+          cards
         end
       end
 
       def count_search_results(query)
-        # Count with proper permission context - only count cards user can read
-        Card::Auth.as(current_account.name) do
-          cards = Card.search(query)
-          cards.select { |c| c.ok?(:read) }.count
-        end
+        Card.search(query.merge(return: "count"))
       end
 
       def find_type_by_name(name)
-        type_card = Card.fetch(name)
+        type_card = Card.fetch(name, skip_modules: true)
         return type_card if type_card&.type_id == Card::CardtypeID
 
         Card.search(type: "Cardtype", name: ["match", name]).first
@@ -254,8 +292,38 @@ module Api
       end
 
       def convert_markdown_to_html(markdown)
-        # Phase 2: Use proper kramdown-based converter
-        McpApi::MarkdownConverter.markdown_to_html(markdown)
+        # Simple Markdown-to-HTML conversion preserving [[...]] links
+        # Phase 1: Basic conversion; Phase 2: Use proper markdown gem
+        html = markdown.dup
+
+        # Preserve wiki links by temporarily replacing them
+        wiki_links = {}
+        html.gsub!(/\[\[(.*?)\]\]/) do |match|
+          key = "__WIKILINK_#{wiki_links.size}__"
+          wiki_links[key] = match
+          key
+        end
+
+        # Convert basic markdown
+        html.gsub!(/^# (.+)$/, '<h1>\1</h1>')
+        html.gsub!(/^## (.+)$/, '<h2>\1</h2>')
+        html.gsub!(/^### (.+)$/, '<h3>\1</h3>')
+        html.gsub!(/\*\*(.+?)\*\*/, '<strong>\1</strong>')
+        html.gsub!(/\*(.+?)\*/, '<em>\1</em>')
+        html.gsub!(/^- (.+)$/, '<li>\1</li>')
+
+        # Wrap paragraphs
+        lines = html.split("\n").reject(&:empty?)
+        html = lines.map { |line|
+          line.match?(/^<[h\d|li]/) ? line : "<p>#{line}</p>"
+        }.join("\n")
+
+        # Restore wiki links
+        wiki_links.each do |key, link|
+          html.gsub!(key, link)
+        end
+
+        html
       end
 
       def apply_patch(card, patch_params)
@@ -265,7 +333,7 @@ module Api
         when "replace_between"
           apply_replace_between(card, patch_params)
         else
-          raise ArgumentError, "Unknown patch mode: #{mode}"
+          render_error("validation_error", "Unknown patch mode: #{mode}")
         end
       end
 
@@ -273,20 +341,19 @@ module Api
         start_marker = patch_params[:start_marker]
         end_marker = patch_params[:end_marker]
         replacement = patch_params[:replacement_html]
-        # Default end_inclusive to false per spec
-        end_inclusive = patch_params.key?(:end_inclusive) ? patch_params[:end_inclusive] : false
+        end_inclusive = patch_params[:end_inclusive] != false
 
         content = card.content
         start_idx = content.index(start_marker)
 
         unless start_idx
-          raise ArgumentError, "Start marker not found: #{start_marker}"
+          return render_error("validation_error", "Start marker not found", { marker: start_marker })
         end
 
         end_idx = content.index(end_marker, start_idx + start_marker.length)
 
         unless end_idx
-          raise ArgumentError, "End marker not found: #{end_marker}"
+          return render_error("validation_error", "End marker not found", { marker: end_marker })
         end
 
         # Adjust end index based on end_inclusive flag
@@ -357,10 +424,6 @@ module Api
 
         return { status: "error", name: name, message: "Card not found" } unless card
 
-        # Check permission before attempting update
-        can_update = Card::Auth.as(current_account.name) { card.ok?(:update) }
-        return { status: "error", name: name, message: "Permission denied" } unless can_update
-
         Card::Auth.as(current_account.name) do
           if op["patch"]
             apply_patch(card, op["patch"])
@@ -391,14 +454,11 @@ module Api
 
           content = prepare_content(child_spec["content"], child_spec["markdown_content"])
 
-          # Create child with service account permission context
-          Card::Auth.as(current_account.name) do
-            Card.create!(
-              name: child_name,
-              type_id: type_card.id,
-              content: content
-            )
-          end
+          Card.create!(
+            name: child_name,
+            type_id: type_card.id,
+            content: content
+          )
         end
       end
 
@@ -421,6 +481,74 @@ module Api
           updated_at: card.updated_at.iso8601,
           created_at: card.created_at.iso8601
         }
+      end
+
+      # Fetch cards that reference/link to the given card
+      def fetch_referers(card)
+        # Use Decko's referers method if available, otherwise search for cards containing this card's name
+        if card.respond_to?(:referers)
+          card.referers
+        else
+          # Fallback: search for cards containing references to this card
+          Card.search(content: ["match", "[[#{card.name}]]"], limit: 100)
+        end
+      rescue StandardError
+        []
+      end
+
+      # Fetch cards that nest/include the given card
+      def fetch_nested_in(card)
+        # Use Decko's nested_in or includees method if available
+        if card.respond_to?(:nested_in)
+          card.nested_in
+        elsif card.respond_to?(:includees)
+          card.includees
+        else
+          # Fallback: search for cards containing nest syntax {{cardname}}
+          Card.search(content: ["match", "{{#{card.name}}}"], limit: 100)
+        end
+      rescue StandardError
+        []
+      end
+
+      # Fetch cards that this card nests/includes
+      def fetch_nests(card)
+        # Use Decko's nests or includes method if available
+        if card.respond_to?(:nests)
+          card.nests
+        elsif card.respond_to?(:includes)
+          card.includes
+        else
+          # Fallback: parse card content for {{...}} syntax
+          content = card.content || ""
+          nest_pattern = /\{\{([^}]+)\}\}/
+          names = content.scan(nest_pattern).flatten.map(&:strip)
+          names.map { |name| Card.fetch(name) }.compact
+        end
+      rescue StandardError
+        []
+      end
+
+      # Fetch cards that this card links to
+      def fetch_links(card)
+        # Use Decko's links method if available
+        if card.respond_to?(:links)
+          card.links
+        else
+          # Fallback: parse card content for [[...]] syntax
+          content = card.content || ""
+          link_pattern = /\[\[([^\]]+)\]\]/
+          names = content.scan(link_pattern).flatten.map(&:strip)
+          names.map { |name| Card.fetch(name) }.compact
+        end
+      rescue StandardError
+        []
+      end
+
+      # Fetch cards that link to this card
+      def fetch_linked_by(card)
+        # Same as referers for now
+        fetch_referers(card)
       end
     end
   end
