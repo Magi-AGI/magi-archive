@@ -28,6 +28,11 @@ Decko.application.routes.draw do
       resources :cards, param: :name, only: [:index, :show, :create, :update, :destroy] do
         member do
           get :children
+          get :referers
+          get :nested_in
+          get :nests
+          get :links
+          get :linked_by
         end
 
         collection do
@@ -39,6 +44,15 @@ Decko.application.routes.draw do
       namespace :render do
         post '/', to: 'render#html_to_markdown', as: :html_to_markdown
         post 'markdown', to: 'render#markdown_to_html'
+      end
+
+      # Validation endpoints
+      namespace :validation do
+        post 'tags', to: 'validation#validate_tags'
+        post 'structure', to: 'validation#validate_structure'
+        get 'requirements/:type', to: 'validation#requirements'
+        post 'recommend_structure', to: 'validation#recommend_structure'
+        post 'suggest_improvements', to: 'validation#suggest_improvements'
       end
     end
   end
