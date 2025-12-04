@@ -16,7 +16,7 @@ module Api
       private
 
       def auth_endpoint?
-        controller_name == "auth"
+        controller_name == "auth" || controller_name == "jwks"
       end
 
       def authenticate_mcp_request!
@@ -40,9 +40,10 @@ module Api
       end
 
       def verify_token(token)
-        verifier = Rails.application.message_verifier(:mcp_auth)
-        verifier.verify(token)
-      rescue ActiveSupport::MessageVerifier::InvalidSignature, ArgumentError
+        # Use JWT service with RS256 verification
+        McpApi::JwtService.verify_token(token)
+      rescue StandardError => e
+        Rails.logger.warn("Token verification failed: #{e.message}")
         nil
       end
 

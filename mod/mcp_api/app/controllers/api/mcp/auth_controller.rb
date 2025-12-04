@@ -6,7 +6,7 @@ module Api
   module Mcp
     class AuthController < BaseController
       # POST /api/mcp/auth
-      # Issues MessageVerifier token using username/password OR API key
+      # Issues RS256 JWT token using username/password OR API key
       #
       # Method 1: Username/Password (Recommended for human users)
       # {
@@ -177,36 +177,29 @@ module Api
       # ==================== Token Generation ====================
 
       def generate_token_for_user(role, user_card)
-        payload = {
+        # Use JWT service with RS256 instead of MessageVerifier
+        api_key_id = "user:#{user_card.name}"
+
+        McpApi::JwtService.generate_token(
           role: role,
-          username: user_card.name,
-          auth_method: "username",
-          iat: Time.now.to_i,
-          exp: (Time.now.to_i + token_ttl)
-        }
-
-        # Add email if available
-        email = Mcp::UserAuthenticator.email(user_card)
-        payload[:email] = email if email
-
-        verifier = Rails.application.message_verifier(:mcp_auth)
-        verifier.generate(payload)
+          api_key_id: api_key_id,
+          expires_in: token_ttl
+        )
       end
 
       def generate_token_for_api_key(role, api_key)
-        payload = {
+        # Use JWT service with RS256 instead of MessageVerifier
+        api_key_id = if @api_key_record
+                       "key:#{@api_key_record.id}"
+                     else
+                       "key:#{api_key.slice(0, 8)}" # Legacy key prefix
+                     end
+
+        McpApi::JwtService.generate_token(
           role: role,
-          api_key_prefix: api_key.slice(0, 8), # Store prefix only for audit
-          auth_method: "api_key",
-          iat: Time.now.to_i,
-          exp: (Time.now.to_i + token_ttl)
-        }
-
-        # Add key name if database key
-        payload[:api_key_name] = @api_key_record.name if @api_key_record
-
-        verifier = Rails.application.message_verifier(:mcp_auth)
-        verifier.generate(payload)
+          api_key_id: api_key_id,
+          expires_in: token_ttl
+        )
       end
 
       # ==================== Utilities ====================
