@@ -240,7 +240,26 @@ module Api
       def build_search_query
         query = {}
 
-        query[:name] = ["match", params[:q]] if params[:q]
+        # Handle search_in parameter for name/content/both search
+        if params[:q]
+          search_in = params[:search_in] || "name"  # Default to name search for backward compatibility
+
+          case search_in
+          when "content"
+            # Search in content only
+            query[:content] = ["match", params[:q]]
+          when "both"
+            # Search in both name and content using OR condition
+            query[:or] = {
+              name: ["match", params[:q]],
+              content: ["match", params[:q]]
+            }
+          else  # "name" or any other value defaults to name search
+            # Search in name only (default, fastest)
+            query[:name] = ["match", params[:q]]
+          end
+        end
+
         query[:name] = ["starts_with", params[:prefix]] if params[:prefix]
         query[:type] = params[:type] if params[:type]
 
