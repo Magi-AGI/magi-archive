@@ -14,6 +14,10 @@ Decko.application.routes.draw do
   # MCP API routes - must be before Decko::Engine mount to take precedence
   namespace :api do
     namespace :mcp do
+      # Health check endpoints (no auth required)
+      get 'health', to: 'health#index'
+      get 'health/ping', to: 'health#ping'
+
       # Auth endpoint
       post 'auth', to: 'auth#create'
 
