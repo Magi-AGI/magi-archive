@@ -5,9 +5,12 @@
 require Rails.root.join('mod/mcp_api/app/controllers/concerns/rate_limitable.rb')
 require Rails.root.join('mod/mcp_api/app/controllers/api/mcp/base_controller.rb')
 
-# Then load all other controllers
+# Then load all other controllers (including admin namespace)
 Dir[Rails.root.join('mod/mcp_api/app/controllers/api/mcp/*_controller.rb')].sort.each do |f|
   require f unless f.include?('base_controller')
+end
+Dir[Rails.root.join('mod/mcp_api/app/controllers/api/mcp/admin/*_controller.rb')].sort.each do |f|
+  require f
 end
 
 Decko.application.routes.draw do
@@ -61,6 +64,12 @@ Decko.application.routes.draw do
         get 'requirements/:type', to: 'validation#requirements'
         post 'recommend_structure', to: 'validation#recommend_structure'
         post 'suggest_improvements', to: 'validation#suggest_improvements'
+      end
+
+      # Admin endpoints (admin role required)
+      namespace :admin do
+        resources :api_keys, only: [:index, :show, :create, :update, :destroy]
+        post 'database/backup', to: 'database#backup'
       end
     end
   end
