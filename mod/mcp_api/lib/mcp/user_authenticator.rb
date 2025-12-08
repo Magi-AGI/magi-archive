@@ -42,14 +42,23 @@ module Mcp
       user = Card.find_by_name(username)
       return user if user&.type_name == "User"
 
-      # Try case-insensitive search
-      Card.where("lower(name) = ? AND type_id = ?", username.downcase, Card::UserID).first
-    rescue NameError
-      # Fallback if Card::UserID constant not available
-      Card.where("lower(name) = ?", username.downcase)
-          .joins(:type_card)
-          .where("cards.name = 'User'")
-          .first
+      # Try case-insensitive search with type checking
+      begin
+        # Try using Card::UserID constant if available
+        user_type_id = defined?(Card::UserID) ? Card::UserID : Card.find_by_name("User")&.id
+        if user_type_id
+          Card.where("lower(name) = ? AND type_id = ?", username.downcase, user_type_id).first
+        else
+          # Fallback: join with type card
+          Card.where("lower(name) = ?", username.downcase)
+              .joins("INNER JOIN cards AS type_cards ON cards.type_id = type_cards.id")
+              .where("type_cards.name = 'User'")
+              .first
+        end
+      rescue StandardError => e
+        Rails.logger.error("Error finding user card #{username}: #{e.message}")
+        nil
+      end
     end
 
     # Verify password for a user card
