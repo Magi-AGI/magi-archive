@@ -17,8 +17,10 @@ module Api
         return render_error("validation_error", "Missing terms_card parameter") unless terms_card_name
         return render_error("validation_error", "Missing results_card parameter") unless results_card_name
 
-        # Fetch the terms card
-        terms_card = Card.fetch(terms_card_name)
+        # Fetch the terms card with proper auth context
+        terms_card = Card::Auth.as(current_account.name) do
+          Card.fetch(terms_card_name)
+        end
         return render_error("not_found", "Terms card '#{terms_card_name}' not found") unless terms_card
 
         # Extract spoiler terms from the terms card
