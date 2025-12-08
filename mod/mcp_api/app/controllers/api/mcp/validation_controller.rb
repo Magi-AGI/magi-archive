@@ -68,7 +68,9 @@ module Api
 
         return render_error("validation_error", "Missing name parameter") unless card_name
 
-        card = Card.fetch(card_name)
+        card = Card::Auth.as(current_account.name) do
+          Card.fetch(card_name)
+        end
         return render_error("not_found", "Card '#{card_name}' not found") unless card
 
         improvements = analyze_card_and_suggest_improvements(card)
@@ -252,13 +254,17 @@ module Api
       end
 
       def fetch_tags_from_wiki
-        # Try to fetch all Tag type cards
-        tag_cards = Card.search(type: "Tag", limit: 500)
+        # Try to fetch all Tag type cards with proper auth context
+        tag_cards = Card::Auth.as(current_account.name) do
+          Card.search(type: "Tag", limit: 500)
+        end
         tag_names = tag_cards.map(&:name).compact
 
         # If no Tag type exists, try searching for cards ending with +tags
         if tag_names.empty?
-          tags_subcards = Card.search(name: ["match", "*+tags"], limit: 500)
+          tags_subcards = Card::Auth.as(current_account.name) do
+            Card.search(name: ["match", "*+tags"], limit: 500)
+          end
           # Extract unique tag values from content
           tag_names = tags_subcards.flat_map do |card|
             extract_tags_from_content(card.content || "")

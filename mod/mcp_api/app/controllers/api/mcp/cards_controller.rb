@@ -205,7 +205,9 @@ module Api
 
       def set_card
         name = params[:name]
-        @card = Card.fetch(name, skip_modules: true)
+        @card = Card::Auth.as(current_account.name) do
+          Card.fetch(name, skip_modules: true)
+        end
 
         unless @card
           render_error("not_found", "Card '#{name}' not found", {}, status: :not_found)

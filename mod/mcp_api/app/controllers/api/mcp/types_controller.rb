@@ -39,20 +39,24 @@ module Api
         cache_ttl = (ENV["MCP_TYPES_CACHE_TTL"] || 3600).to_i
 
         Rails.cache.fetch(cache_key, expires_in: cache_ttl) do
-          Card.search(type: "Cardtype").sort_by(&:name)
+          Card::Auth.as(current_account.name) do
+            Card.search(type: "Cardtype").sort_by(&:name)
+          end
         end
       end
 
       def find_type_by_name(name)
-        # Try exact match first
-        type_card = Card.fetch(name)
-        return type_card if type_card&.type_id == Card::CardtypeID
+        Card::Auth.as(current_account.name) do
+          # Try exact match first
+          type_card = Card.fetch(name)
+          return type_card if type_card&.type_id == Card::CardtypeID
 
-        # Try case-insensitive search
-        Card.search(
-          type: "Cardtype",
-          name: ["match", name]
-        ).first
+          # Try case-insensitive search
+          Card.search(
+            type: "Cardtype",
+            name: ["match", name]
+          ).first
+        end
       end
 
       def type_json(type_card, include_description: false)
@@ -84,7 +88,9 @@ module Api
 
       def type_description(type_card)
         # Try to get description from type's content or help card
-        help_card = Card.fetch("#{type_card.name}+*type+*help")
+        help_card = Card::Auth.as(current_account.name) do
+          Card.fetch("#{type_card.name}+*type+*help")
+        end
         return help_card.content if help_card
 
         # Fallback descriptions

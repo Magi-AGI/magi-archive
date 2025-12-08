@@ -98,8 +98,10 @@ module Api
       end
 
       def execute_safe_query(query, limit, offset)
-        # Execute query through Decko's search
-        cards = Card.search(query)
+        # Execute query through Decko's search with proper auth context
+        cards = Card::Auth.as(current_account.name) do
+          Card.search(query)
+        end
 
         # Apply role-based filtering
         if current_role == "user"
@@ -116,7 +118,9 @@ module Api
         count_query.delete(:offset)
         count_query[:return] = "count"
 
-        Card.search(count_query)
+        Card::Auth.as(current_account.name) do
+          Card.search(count_query)
+        end
       rescue StandardError
         0
       end
