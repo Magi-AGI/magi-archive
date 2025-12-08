@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "../../../../app/models/application_record"
+require_relative "../../../../app/models/mcp_api_key"
 require_relative "../../../../lib/mcp/user_authenticator"
 
 module Api
