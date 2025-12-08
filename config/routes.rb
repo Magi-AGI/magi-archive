@@ -28,6 +28,9 @@ Decko.application.routes.draw do
       get 'types', to: 'types#index'
       get 'types/:name', to: 'types#show'
 
+      # Jobs endpoints (async operations)
+      post 'jobs/spoiler-scan', to: 'jobs#spoiler_scan'
+
       # Cards endpoints
       resources :cards, param: :name, only: [:index, :show, :create, :update, :destroy] do
         member do
