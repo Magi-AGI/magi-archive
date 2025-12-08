@@ -48,10 +48,8 @@ Decko.application.routes.draw do
       end
 
       # Render endpoints (Phase 2)
-      namespace :render do
-        post '/', to: 'render#html_to_markdown', as: :html_to_markdown
-        post 'markdown', to: 'render#markdown_to_html'
-      end
+      post 'render', to: 'render#html_to_markdown'
+      post 'render/markdown', to: 'render#markdown_to_html'
 
       # Query endpoint (Phase 3)
       post 'run_query', to: 'query#run'

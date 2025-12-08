@@ -98,12 +98,23 @@ module Api
       def children
         return render_forbidden_gm_content unless can_view_card?(@card)
 
-        children_cards = @card.children.select { |c| can_view_card?(c) }
+        limit = [(params[:limit] || 50).to_i, 100].min
+        offset = (params[:offset] || 0).to_i
+        depth = (params[:depth] || 1).to_i
+
+        children_cards = fetch_children(@card, depth: depth).select { |c| can_view_card?(c) }
+
+        # Apply pagination
+        total = children_cards.size
+        paginated_children = children_cards.drop(offset).take(limit)
 
         render json: {
           parent: @card.name,
-          children: children_cards.map { |c| card_summary_json(c) },
-          child_count: children_cards.size
+          children: paginated_children.map { |c| card_full_json(c) },
+          child_count: total,
+          depth: depth,
+          limit: limit,
+          offset: offset
         }
       end
 
@@ -591,6 +602,58 @@ module Api
       def fetch_linked_by(card)
         # Same as referers for now
         fetch_referers(card)
+      end
+
+      # Fetch child cards using Decko's left_id relationship
+      # In Decko, child cards have left_id pointing to parent card's id
+      # E.g., "Parent+Child" has left_id = Parent.id
+      def fetch_children(card, depth: 1)
+        # Check for Decko built-in methods first
+        if card.respond_to?(:children)
+          return card.children
+        elsif card.respond_to?(:parts)
+          return card.parts
+        elsif card.respond_to?(:items)
+          return card.items
+        end
+
+        # Use left_id relationship to find children
+        direct_children = Card::Auth.as(current_account.name) do
+          Card.where("left_id = ?", card.id).to_a
+        end
+
+        # For depth > 1, recursively fetch descendants
+        if depth > 1
+          all_matches = []
+          to_process = [card]
+          current_depth = 0
+
+          while current_depth < depth && to_process.any?
+            current_level = to_process
+            to_process = []
+            current_depth += 1
+
+            current_level.each do |parent|
+              children = Card::Auth.as(current_account.name) do
+                Card.where("left_id = ?", parent.id).to_a
+              end
+              all_matches.concat(children)
+              to_process.concat(children) if current_depth < depth
+            end
+          end
+
+          all_matches.uniq
+        else
+          direct_children
+        end
+      rescue StandardError => e
+        Rails.logger.error "fetch_children error: #{e.class.name}: #{e.message}"
+        []
+      end
+
+      # Fetch all descendants (unlimited depth)
+      def fetch_all_descendants(card)
+        fetch_children(card, depth: 999)
       end
     end
   end
