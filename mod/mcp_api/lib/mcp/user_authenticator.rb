@@ -17,22 +17,72 @@ module Mcp
     # @param password [String] The user's password
     # @return [Hash] { user: Card, role: String }
     # @raise [AuthenticationError] if authentication fails
+    # Authenticate a user with username or email and password
+    #
+    # @param username [String] Username or email address
+    # @param password [String] Password
+    # @return [Hash] {user: Card, role: String}
+    # @raise [AuthenticationError] if authentication fails
     def self.authenticate(username, password)
-      # Find user card by name
-      user_card = find_user_card(username)
-      raise AuthenticationError, "User not found" unless user_card
-
-      # Verify password using Decko's authentication
-      unless verify_password(user_card, password)
-        raise AuthenticationError, "Invalid password"
+      Rails.logger.info("authenticate called with username: #{username}")
+      
+      # Use Decko's Card::Auth.authenticate which returns the account card
+      # It accepts email address and password
+      account_card = nil
+      
+      # Try authenticating with the input as email first
+      if username.include?("@")
+        Rails.logger.info("Input looks like email, trying Card::Auth.authenticate")
+        account_card = Card::Auth.authenticate(username, password)
       end
-
+      
+      # If that didn't work, try to find the user and get their email
+      unless account_card
+        Rails.logger.info("Trying to find user card to get email")
+        user_card = find_user_card(username)
+        
+        if user_card
+          # Try to find the account card for this user
+          account_card_name = "#{user_card.name}+*account"
+          account = Card.find_by_name(account_card_name)
+          
+          if account
+            # Get email from account
+            email_card = Card.find_by_name("#{account_card_name}+*email")
+            if email_card && email_card.db_content.present?
+              email = email_card.db_content
+              Rails.logger.info("Found email #{email}, trying Card::Auth.authenticate")
+              account_card = Card::Auth.authenticate(email, password)
+            end
+          end
+        end
+      end
+      
+      unless account_card
+        Rails.logger.error("Authentication failed - account_card is nil")
+        raise AuthenticationError, "Invalid credentials"
+      end
+      
+      Rails.logger.info("Authentication successful! Account card: #{account_card.name}")
+      
+      # Extract username from account card name (remove +*account suffix)
+      username_from_account = account_card.name.sub(/\+\*account$/i, "")
+      Rails.logger.info("Extracted username: #{username_from_account}")
+      user_card = Card.find_by_name(username_from_account)
+      Rails.logger.info("User card lookup result: #{user_card.inspect}")
+      
+      unless user_card
+        Rails.logger.error("Could not find user card for #{username_from_account}")
+        raise AuthenticationError, "User card not found"
+      end
+      
       # Determine MCP role from user permissions
       role = determine_role(user_card)
-
+      
       { user: user_card, role: role }
     end
 
+    
     # Find a user card by username
     #
     # @param username [String] The username
@@ -76,30 +126,18 @@ module Mcp
     # @param user_card [Card] The user card
     # @param password [String] The password to verify
     # @return [Boolean] True if password is valid
-    def self.verify_password(user_card, password)
-      # Decko stores encrypted passwords in a subcard: "Username+*password"
-      Rails.logger.info("verify_password called for: #{user_card.name}")
-      password_card = Card.find_by_name("#{user_card.name}+*password")
-      Rails.logger.info("password_card: #{password_card.inspect}")
-      return false unless password_card
-
-      # Get the encrypted password content
-      encrypted = password_card.db_content
-      return false if encrypted.blank?
-
-      # Use BCrypt directly for password verification
-      Rails.logger.info("Verifying password for #{user_card.name}: encrypted=#{encrypted[0..20]}...")
-      BCrypt::Password.new(encrypted) == password
-    rescue BCrypt::Errors::InvalidHash, StandardError => e
-
-      Rails.logger.error("Password verification failed for #{user_card.name}: #{e.message}")
-      false
-    end
-
-    # Determine MCP role from user's Decko permissions
+    # Verify password for a user card
     #
     # @param user_card [Card] The user card
-    # @return [String] "admin", "gm", or "user"
+    # @param password [String] The password to verify
+    # @return [Boolean] True if password is valid
+    # Verify password for a user card using Decko's authentication
+    #
+    # @param user_card [Card] The user card
+    # @param password [String] The password to verify
+    # @param email [String, nil] Optional email for authentication
+    # @return [Boolean] True if password is valid
+
     def self.determine_role(user_card)
       # Check if user is admin
       return "admin" if admin?(user_card)
@@ -129,7 +167,7 @@ module Mcp
       return true if user_card.respond_to?(:admin?) && user_card.admin?
 
       # Method 3: Check if user has roles card with admin
-      roles_card = user_card.fetch(trait: :roles)
+      roles_card = Card.find_by_name(user_card.name.to_s + "+*roles")
       return true if roles_card&.item_names&.include?("Administrator")
 
       false
@@ -145,7 +183,7 @@ module Mcp
       return true if has_role?(user_card, "GM")
 
       # Check roles card
-      roles_card = user_card.fetch(trait: :roles)
+      roles_card = Card.find_by_name(user_card.name.to_s + "+*roles")
       return true if roles_card && (
         roles_card.item_names.include?("Game Master") ||
         roles_card.item_names.include?("GM")
@@ -161,7 +199,7 @@ module Mcp
     # @return [Boolean] True if user has role
     def self.has_role?(user_card, role_name)
       # Check if user has a +roles subcard
-      roles_card = user_card.fetch(trait: :roles)
+      roles_card = Card.find_by_name(user_card.name.to_s + "+*roles")
       return false unless roles_card
 
       # Check if role is in the pointer items
@@ -184,8 +222,8 @@ module Mcp
     # @param user_card [Card] The user card
     # @return [String, nil] Email address
     def self.email(user_card)
-      email_card = Card.find_by_name("#{user_card.name}+*email")
-      email_card&.content
+      email_card = Card.find_by_name(user_card.name.to_s + "+*email")
+      email_card&.db_content
     end
   end
 end
