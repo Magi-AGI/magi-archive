@@ -282,11 +282,18 @@ module Api
           query[:not] = { name: ["like", pattern] }
         end
 
-        if params[:updated_since]
+        # Handle date range queries properly
+        if params[:updated_since] && params[:updated_before]
+          # Both: create range query with AND condition
+          query[:updated_at] = {
+            and: [
+              [">=", Time.parse(params[:updated_since])],
+              ["<=", Time.parse(params[:updated_before])]
+            ]
+          }
+        elsif params[:updated_since]
           query[:updated_at] = [">=", Time.parse(params[:updated_since])]
-        end
-
-        if params[:updated_before]
+        elsif params[:updated_before]
           query[:updated_at] = ["<=", Time.parse(params[:updated_before])]
         end
 
