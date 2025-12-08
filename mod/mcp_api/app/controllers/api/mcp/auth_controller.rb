@@ -46,8 +46,8 @@ module Api
 
         # Authenticate user with Decko
         begin
-          result = Mcp::UserAuthenticator.authenticate(username, password)
-        rescue Mcp::UserAuthenticator::AuthenticationError => e
+          result = ::Mcp::UserAuthenticator.authenticate(username, password)
+        rescue ::Mcp::UserAuthenticator::AuthenticationError => e
           return render_error("authentication_failed", e.message, {}, status: :unauthorized)
         rescue NameError => e
           Rails.logger.error("NameError in auth: #{e.class}: #{e.message}")
