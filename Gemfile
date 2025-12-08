@@ -28,6 +28,12 @@ gem "thin"
 # The "defaults" includes a lot of functionality that is needed in standard decks.
 gem "card-mod-defaults"
 
+# MCP API dependencies
+gem "bcrypt" # Password hashing for user authentication
+gem "jwt" # RS256 JWT authentication (Phase 2)
+gem "kramdown" # Proper Markdown parsing (Phase 2)
+gem "reverse_markdown" # HTML to Markdown conversion (Phase 2)
+
 
 # BACKGROUND
 # A background gem is needed to run tasks like sending notifications in a background
@@ -41,7 +47,7 @@ gem "card-mod-defaults"
 # You can also create your own mods. Mod developers (or "Monkeys") will want some
 # additional gems to support development and testing.
 # gem "card-mod-monkey", group: :development
-# gem "decko-rspec", group: :test
+gem "decko-rspec", group: :test
 # gem "decko-cucumber", group: :cucumber
 # gem "decko-cypress", group: :cypress
 # gem "decko-profile", group: :profile
