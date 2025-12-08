@@ -1,18 +1,19 @@
 # frozen_string_literal: true
 
-# MCP API Eager Loading for Production
+# MCP API Autoload/Eager Load Configuration
 #
-# In production mode, Rails doesn't use autoloading for performance/security.
-# This initializer ensures MCP API models and libs are loaded before the
-# controllers try to reference them.
+# Configure Rails to recognize and load MCP API components from mod/ directory.
+# This ensures models, libs, and controllers are available in all environments.
 
-Rails.application.config.to_prepare do
-  # Only eager load in production (development uses autoloading)
-  if Rails.env.production?
-    # Load MCP API models
-    require_dependency Rails.root.join('mod/mcp_api/app/models/mcp_api_key.rb')
+# Add MCP API paths to autoload paths (development) and eager load paths (production)
+Rails.application.config.tap do |config|
+  mcp_api_root = Rails.root.join('mod/mcp_api')
 
-    # Load MCP API libs
-    require_dependency Rails.root.join('mod/mcp_api/lib/mcp/user_authenticator.rb')
-  end
+  # Models
+  config.autoload_paths << mcp_api_root.join('app/models')
+  config.eager_load_paths << mcp_api_root.join('app/models')
+
+  # Libs (for Mcp::UserAuthenticator)
+  config.autoload_paths << mcp_api_root.join('lib')
+  config.eager_load_paths << mcp_api_root.join('lib')
 end
