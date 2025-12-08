@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "../../../../lib/mcp/api_key_manager"
+require_relative "../../../../../lib/mcp/api_key_manager"
 
 module Api
   module Mcp
