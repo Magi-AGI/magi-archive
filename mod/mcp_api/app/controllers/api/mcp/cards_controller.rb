@@ -281,7 +281,10 @@ module Api
       end
 
       def execute_search(query, limit, offset)
-        cards = Card.search(query.merge(limit: limit, offset: offset))
+        # Execute search with proper auth context
+        cards = Card::Auth.as(current_account.name) do
+          Card.search(query.merge(limit: limit, offset: offset))
+        end
 
         # Filter out GM/AI content for user role
         if current_role == "user"
@@ -292,14 +295,18 @@ module Api
       end
 
       def count_search_results(query)
-        Card.search(query.merge(return: "count"))
+        Card::Auth.as(current_account.name) do
+          Card.search(query.merge(return: "count"))
+        end
       end
 
       def find_type_by_name(name)
-        type_card = Card.fetch(name, skip_modules: true)
-        return type_card if type_card&.type_id == Card::CardtypeID
+        Card::Auth.as(current_account.name) do
+          type_card = Card.fetch(name, skip_modules: true)
+          return type_card if type_card&.type_id == Card::CardtypeID
 
-        Card.search(type: "Cardtype", name: ["match", name]).first
+          Card.search(type: "Cardtype", name: ["match", name]).first
+        end
       end
 
       def prepare_content(content, markdown_content)
@@ -505,16 +512,18 @@ module Api
       # Fetch cards that reference/link to the given card
       def fetch_referers(card)
         # Use Decko's referers method if available, otherwise search for cards containing this card's name
-        if card.respond_to?(:referers)
-          card.referers
-        else
-          # Fallback: search for cards containing references to this card
-          # Use regex to match complete link syntax and prevent false positives
-          # Matches: [[CardName]] or [[CardName|Display Text]]
-          # Does NOT match [[CardName Suffix]] (prevents "Apple" matching "Apple Pie")
-          escaped_name = Regexp.escape(card.name)
-          link_pattern = "\\[\\[#{escaped_name}(?:\\|[^\\]]+)?\\]\\]"
-          Card.search(content: ["match", link_pattern], limit: 100)
+        Card::Auth.as(current_account.name) do
+          if card.respond_to?(:referers)
+            card.referers
+          else
+            # Fallback: search for cards containing references to this card
+            # Use regex to match complete link syntax and prevent false positives
+            # Matches: [[CardName]] or [[CardName|Display Text]]
+            # Does NOT match [[CardName Suffix]] (prevents "Apple" matching "Apple Pie")
+            escaped_name = Regexp.escape(card.name)
+            link_pattern = "\\[\\[#{escaped_name}(?:\\|[^\\]]+)?\\]\\]"
+            Card.search(content: ["match", link_pattern], limit: 100)
+          end
         end
       rescue StandardError
         []
@@ -523,18 +532,20 @@ module Api
       # Fetch cards that nest/include the given card
       def fetch_nested_in(card)
         # Use Decko's nested_in or includees method if available
-        if card.respond_to?(:nested_in)
-          card.nested_in
-        elsif card.respond_to?(:includees)
-          card.includees
-        else
-          # Fallback: search for cards containing nest syntax {{cardname}}
-          # Use regex to match complete nest syntax and prevent false positives
-          # Matches: {{CardName}} exactly
-          # Does NOT match {{CardName Suffix}} (prevents "Apple" matching "Apple Pie")
-          escaped_name = Regexp.escape(card.name)
-          nest_pattern = "\\{\\{#{escaped_name}\\}\\}"
-          Card.search(content: ["match", nest_pattern], limit: 100)
+        Card::Auth.as(current_account.name) do
+          if card.respond_to?(:nested_in)
+            card.nested_in
+          elsif card.respond_to?(:includees)
+            card.includees
+          else
+            # Fallback: search for cards containing nest syntax {{cardname}}
+            # Use regex to match complete nest syntax and prevent false positives
+            # Matches: {{CardName}} exactly
+            # Does NOT match {{CardName Suffix}} (prevents "Apple" matching "Apple Pie")
+            escaped_name = Regexp.escape(card.name)
+            nest_pattern = "\\{\\{#{escaped_name}\\}\\}"
+            Card.search(content: ["match", nest_pattern], limit: 100)
+          end
         end
       rescue StandardError
         []

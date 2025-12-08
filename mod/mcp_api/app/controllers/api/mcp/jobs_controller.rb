@@ -97,9 +97,11 @@ module Api
 
         # Search for each spoiler term
         spoiler_terms.each do |term|
-          # Search in card content
+          # Search in card content with proper auth context
           query = { content: ["match", term], limit: limit }
-          cards = Card.search(query)
+          cards = Card::Auth.as(current_account.name) do
+            Card.search(query)
+          end
 
           # Filter based on scope
           filtered_cards = filter_cards_by_scope(cards, scope)
@@ -213,10 +215,12 @@ module Api
       end
 
       def find_type_by_name(name)
-        type_card = Card.fetch(name, skip_modules: true)
-        return type_card if type_card&.type_id == Card::CardtypeID
+        Card::Auth.as(current_account.name) do
+          type_card = Card.fetch(name, skip_modules: true)
+          return type_card if type_card&.type_id == Card::CardtypeID
 
-        Card.search(type: "Cardtype", name: ["match", name]).first
+          Card.search(type: "Cardtype", name: ["match", name]).first
+        end
       end
     end
   end
