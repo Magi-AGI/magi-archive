@@ -1,8 +1,7 @@
 # frozen_string_literal: true
 
-require_relative "../../../../app/models/application_record"
-require_relative "../../../../app/models/mcp_api_key"
 require_relative "../../../../lib/mcp/user_authenticator"
+require_relative "../../../../lib/mcp/api_key_manager"
 
 module Api
   module Mcp
@@ -157,9 +156,9 @@ module Api
       end
 
       def valid_api_key?(api_key)
-        # Phase 2: Try database-backed keys first
-        @api_key_record = ::McpApiKey.authenticate(api_key)
-        return true if @api_key_record
+        # Phase 2: Try Card-based keys first
+        @api_key_card = ::Mcp::ApiKeyManager.authenticate(api_key)
+        return true if @api_key_card
 
         # Phase 1 fallback: Single API key from env (for backwards compatibility)
         configured_key = ENV["MCP_API_KEY"]
@@ -167,7 +166,7 @@ module Api
 
         # Constant-time comparison to prevent timing attacks
         if ActiveSupport::SecurityUtils.secure_compare(api_key, configured_key)
-          @api_key_record = nil  # Mark as legacy key
+          @api_key_card = nil  # Mark as legacy key
           return true
         end
 
@@ -175,9 +174,9 @@ module Api
       end
 
       def allowed_role_for_key?(api_key, role)
-        # Phase 2: Check database key permissions
-        if @api_key_record
-          return @api_key_record.role_allowed?(role)
+        # Phase 2: Check Card-based key permissions
+        if @api_key_card
+          return ::Mcp::ApiKeyManager.role_allowed?(@api_key_card, role)
         end
 
         # Phase 1 fallback: Single API key has access to all roles
@@ -199,8 +198,8 @@ module Api
 
       def generate_token_for_api_key(role, api_key)
         # Use JWT service with RS256 instead of MessageVerifier
-        api_key_id = if @api_key_record
-                       "key:#{@api_key_record.id}"
+        api_key_id = if @api_key_card
+                       "key:#{@api_key_card.id}"
                      else
                        "key:#{api_key.slice(0, 8)}" # Legacy key prefix
                      end
