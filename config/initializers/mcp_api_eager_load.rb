@@ -1,19 +1,14 @@
 # frozen_string_literal: true
 
-# MCP API Autoload/Eager Load Configuration
+# MCP API Late Loading
 #
-# Configure Rails to recognize and load MCP API components from mod/ directory.
-# This ensures models, libs, and controllers are available in all environments.
+# Load MCP API models after Rails has finished initializing.
+# This ensures ApplicationRecord and other dependencies are available.
 
-# Add MCP API paths to autoload paths (development) and eager load paths (production)
-Rails.application.config.tap do |config|
-  mcp_api_root = Rails.root.join('mod/mcp_api')
-
-  # Models
-  config.autoload_paths << mcp_api_root.join('app/models')
-  config.eager_load_paths << mcp_api_root.join('app/models')
-
-  # Libs (for Mcp::UserAuthenticator)
-  config.autoload_paths << mcp_api_root.join('lib')
-  config.eager_load_paths << mcp_api_root.join('lib')
+Rails.application.config.after_initialize do
+  # Only in production - development uses autoloading
+  if Rails.env.production?
+    # Load model files that aren't in standard Rails autoload paths
+    require_relative '../../mod/mcp_api/app/models/mcp_api_key.rb' unless defined?(::McpApiKey)
+  end
 end
