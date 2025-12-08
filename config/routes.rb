@@ -1,7 +1,13 @@
 # -*- encoding : utf-8 -*-
 
-# Manually require MCP API controllers before routing
-# Load base controller and concerns first
+# Manually require MCP API models, libs, controllers before routing
+# Load models first
+require Rails.root.join('mod/mcp_api/app/models/mcp_api_key.rb')
+
+# Load libs
+require Rails.root.join('mod/mcp_api/lib/mcp/user_authenticator.rb')
+
+# Load base controller and concerns
 require Rails.root.join('mod/mcp_api/app/controllers/concerns/rate_limitable.rb')
 require Rails.root.join('mod/mcp_api/app/controllers/api/mcp/base_controller.rb')
 
