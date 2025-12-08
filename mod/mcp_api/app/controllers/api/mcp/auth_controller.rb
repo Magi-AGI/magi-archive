@@ -156,7 +156,7 @@ module Api
 
       def valid_api_key?(api_key)
         # Phase 2: Try database-backed keys first
-        @api_key_record = McpApiKey.authenticate(api_key)
+        @api_key_record = ::McpApiKey.authenticate(api_key)
         return true if @api_key_record
 
         # Phase 1 fallback: Single API key from env (for backwards compatibility)
