@@ -283,19 +283,16 @@ module Api
         end
 
         # Handle date range queries
-        # Note: Decko CQL doesn't support compound date ranges well, so we use server-side filtering
-        if params[:updated_since] && params[:updated_before]
-          # Store both for post-filtering
-          @filter_date_range = {
-            since: Time.parse(params[:updated_since]),
-            before: Time.parse(params[:updated_before])
-          }
-          # Use the more restrictive filter (since) in the query to reduce result set
-          query[:updated_at] = [">=", Time.parse(params[:updated_since]).to_s]
-        elsif params[:updated_since]
-          query[:updated_at] = [">=", Time.parse(params[:updated_since]).to_s]
-        elsif params[:updated_before]
-          query[:updated_at] = ["<=", Time.parse(params[:updated_before]).to_s]
+        # NOTE: Decko CQL does NOT support updated_at/created_at filtering at all
+        # See: https://decko.org/CQL_Syntax - only id, name, type, content are queryable
+        # We must fetch all cards matching other criteria and filter by date in Ruby
+        if params[:updated_since] || params[:updated_before]
+          @filter_date_range = {}
+          @filter_date_range[:since] = Time.parse(params[:updated_since]) if params[:updated_since]
+          @filter_date_range[:before] = Time.parse(params[:updated_before]) if params[:updated_before]
+          # Sort by update descending to get recent cards first (helps with pagination)
+          query[:sort] = "update"
+          query[:dir] = "desc"
         end
 
         query
@@ -308,10 +305,13 @@ module Api
         end
 
         # Apply date range post-filter if needed
+        # Required because Decko CQL doesn't support updated_at filtering
         if @filter_date_range
           cards = cards.select do |c|
-            c.updated_at >= @filter_date_range[:since] &&
-            c.updated_at <= @filter_date_range[:before]
+            in_range = true
+            in_range = in_range && (c.updated_at >= @filter_date_range[:since]) if @filter_date_range[:since]
+            in_range = in_range && (c.updated_at <= @filter_date_range[:before]) if @filter_date_range[:before]
+            in_range
           end
         end
 
