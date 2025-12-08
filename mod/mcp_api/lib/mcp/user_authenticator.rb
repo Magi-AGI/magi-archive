@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "bcrypt"
 module Mcp
   # Authenticates Decko users and determines their MCP role
   # Integrates with Decko's Card-based user system
@@ -42,23 +43,32 @@ module Mcp
       user = Card.find_by_name(username)
       return user if user&.type_name == "User"
 
-      # Try case-insensitive search with type checking
-      begin
-        # Try using Card::UserID constant if available
-        user_type_id = defined?(Card::UserID) ? Card::UserID : Card.find_by_name("User")&.id
-        if user_type_id
-          Card.where("lower(name) = ? AND type_id = ?", username.downcase, user_type_id).first
-        else
-          # Fallback: join with type card
-          Card.where("lower(name) = ?", username.downcase)
-              .joins("INNER JOIN cards AS type_cards ON cards.type_id = type_cards.id")
-              .where("type_cards.name = 'User'")
-              .first
-        end
-      rescue StandardError => e
-        Rails.logger.error("Error finding user card #{username}: #{e.message}")
-        nil
+      # Try case-insensitive name search
+      user_type_id = defined?(Card::UserID) ? Card::UserID : Card.find_by_name("User")&.id
+      if user_type_id
+        user = Card.where("lower(name) = ? AND type_id = ?", username.downcase, user_type_id).first
+        return user if user
       end
+
+      # If username looks like an email, search by email subcard
+      if username.include?("@")
+        # Find all User cards with matching email
+        # Email is stored in "Username+*email" subcards
+        email_cards = Card.where("lower(db_content) = ?", username.downcase)
+                          .where("name LIKE '%+*email'")
+        
+        email_cards.each do |email_card|
+          # Get parent card name (strip +*email)
+          parent_name = email_card.name.sub(/\*email$/i, "")
+          user = Card.find_by_name(parent_name)
+          return user if user&.type_name == "User"
+        end
+      end
+
+      nil
+    rescue StandardError => e
+      Rails.logger.error("Error finding user card #{username}: #{e.message}")
+      nil
     end
 
     # Verify password for a user card
@@ -68,23 +78,20 @@ module Mcp
     # @return [Boolean] True if password is valid
     def self.verify_password(user_card, password)
       # Decko stores encrypted passwords in a subcard: "Username+*password"
-      password_card = user_card.fetch(trait: :password)
+      Rails.logger.info("verify_password called for: #{user_card.name}")
+      password_card = Card.find_by_name("#{user_card.name}+*password")
+      Rails.logger.info("password_card: #{password_card.inspect}")
       return false unless password_card
 
       # Get the encrypted password content
-      encrypted = password_card.content
+      encrypted = password_card.db_content
       return false if encrypted.blank?
 
-      # Use Decko's password verification (BCrypt-based)
-      # Decko uses Card::Auth for authentication
-      if defined?(Card::Auth)
-        Card::Auth.authenticate(user_card.name, password)
-      else
-        # Fallback: Direct BCrypt comparison
-        require "bcrypt"
-        BCrypt::Password.new(encrypted) == password
-      end
+      # Use BCrypt directly for password verification
+      Rails.logger.info("Verifying password for #{user_card.name}: encrypted=#{encrypted[0..20]}...")
+      BCrypt::Password.new(encrypted) == password
     rescue BCrypt::Errors::InvalidHash, StandardError => e
+
       Rails.logger.error("Password verification failed for #{user_card.name}: #{e.message}")
       false
     end
@@ -177,7 +184,7 @@ module Mcp
     # @param user_card [Card] The user card
     # @return [String, nil] Email address
     def self.email(user_card)
-      email_card = user_card.fetch(trait: :email)
+      email_card = Card.find_by_name("#{user_card.name}+*email")
       email_card&.content
     end
   end

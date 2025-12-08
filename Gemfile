@@ -29,6 +29,7 @@ gem "thin"
 gem "card-mod-defaults"
 
 # MCP API dependencies
+gem "bcrypt" # Password hashing for user authentication
 gem "jwt" # RS256 JWT authentication (Phase 2)
 gem "kramdown" # Proper Markdown parsing (Phase 2)
 gem "reverse_markdown" # HTML to Markdown conversion (Phase 2)
