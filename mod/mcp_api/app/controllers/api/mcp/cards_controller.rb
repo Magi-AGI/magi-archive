@@ -282,13 +282,16 @@ module Api
           query[:not] = { name: ["like", pattern] }
         end
 
-        # Handle date range queries properly
+        # Handle date range queries
+        # Note: Decko CQL doesn't support compound date ranges well, so we use server-side filtering
         if params[:updated_since] && params[:updated_before]
-          # Both: use Decko's 'all' conjunction for AND logic
-          query[:all] = [
-            { updated_at: [">=", Time.parse(params[:updated_since]).to_s] },
-            { updated_at: ["<=", Time.parse(params[:updated_before]).to_s] }
-          ]
+          # Store both for post-filtering
+          @filter_date_range = {
+            since: Time.parse(params[:updated_since]),
+            before: Time.parse(params[:updated_before])
+          }
+          # Use the more restrictive filter (since) in the query to reduce result set
+          query[:updated_at] = [">=", Time.parse(params[:updated_since]).to_s]
         elsif params[:updated_since]
           query[:updated_at] = [">=", Time.parse(params[:updated_since]).to_s]
         elsif params[:updated_before]
@@ -302,6 +305,14 @@ module Api
         # Execute search with proper auth context
         cards = Card::Auth.as(current_account.name) do
           Card.search(query.merge(limit: limit, offset: offset))
+        end
+
+        # Apply date range post-filter if needed
+        if @filter_date_range
+          cards = cards.select do |c|
+            c.updated_at >= @filter_date_range[:since] &&
+            c.updated_at <= @filter_date_range[:before]
+          end
         end
 
         # Filter out GM/AI content for user role
