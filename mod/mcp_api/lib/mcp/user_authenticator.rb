@@ -139,6 +139,7 @@ module Mcp
     # @return [Boolean] True if password is valid
 
     def self.determine_role(user_card)
+      Rails.logger.info("DEBUG determine_role called for user: #{user_card.name}")
       # Check if user is admin
       return "admin" if admin?(user_card)
 
@@ -168,6 +169,7 @@ module Mcp
 
       # Method 3: Check if user has roles card with admin
       roles_card = Card.find_by_name(user_card.name.to_s + "+*roles")
+      Rails.logger.info("DEBUG gm?: roles_card result: #{roles_card.inspect}")
       return true if roles_card&.item_names&.include?("Administrator")
 
       false
@@ -178,12 +180,14 @@ module Mcp
     # @param user_card [Card] The user card
     # @return [Boolean] True if GM
     def self.gm?(user_card)
+      Rails.logger.info("DEBUG gm? called for user: #{user_card.name}")
       # Check if user is in GM role
       return true if has_role?(user_card, "Game Master")
       return true if has_role?(user_card, "GM")
 
       # Check roles card
       roles_card = Card.find_by_name(user_card.name.to_s + "+*roles")
+      Rails.logger.info("DEBUG gm?: roles_card result: #{roles_card.inspect}")
       return true if roles_card && (
         roles_card.item_names.include?("Game Master") ||
         roles_card.item_names.include?("GM")
@@ -197,15 +201,62 @@ module Mcp
     # @param user_card [Card] The user card
     # @param role_name [String] The role name to check
     # @return [Boolean] True if user has role
-    def self.has_role?(user_card, role_name)
-      # Check if user has a +roles subcard
-      roles_card = Card.find_by_name(user_card.name.to_s + "+*roles")
+def self.has_role?(user_card, role_name)
+      Rails.logger.info("=== MARKER: has_role? method ENTRY POINT ===")
+      Rails.logger.info("DEBUG has_role? checking #{role_name} for user: #{user_card.name}")
+      
+      # Try multiple approaches to access roles (pointer/search type)
+      roles_card = nil
+      
+      # Approach 1: Try user_card.fetch(:roles) - Decko's trait accessor
+      begin
+        Rails.logger.info("DEBUG Trying user_card.fetch(:roles)")
+        roles_card = user_card.fetch(:roles)
+        Rails.logger.info("DEBUG fetch(:roles) success: #{roles_card.inspect}")
+      rescue => e
+        Rails.logger.info("DEBUG fetch(:roles) failed: #{e.message}")
+      end
+      
+      # Approach 2: Try Card[user_card.name, :roles] - compound key lookup
+      unless roles_card
+        begin
+          Rails.logger.info("DEBUG Trying Card[user_card.name, :roles]")
+          roles_card = Card[user_card.name, :roles]
+          Rails.logger.info("DEBUG Card[name, :roles] success: #{roles_card.inspect}")
+        rescue => e
+          Rails.logger.info("DEBUG Card[name, :roles] failed: #{e.message}")
+        end
+      end
+      
+      # Approach 3: Try Card.find_by_name - traditional lookup
+      unless roles_card
+        role_card_name = "#{user_card.name}+*roles"
+        Rails.logger.info("DEBUG Trying Card.find_by_name('#{role_card_name}')")
+        roles_card = Card.find_by_name(role_card_name)
+        Rails.logger.info("DEBUG find_by_name result: #{roles_card.inspect}")
+      end
+      
       return false unless roles_card
-
-      # Check if role is in the pointer items
-      roles_card.item_names.include?(role_name)
+      
+      # Get role items
+      begin
+        if roles_card.respond_to?(:item_names)
+          item_names = roles_card.item_names
+          Rails.logger.info("DEBUG item_names: #{item_names.inspect}")
+          result = item_names.include?(role_name)
+          Rails.logger.info("DEBUG has_role? result: #{result}")
+          return result
+        else
+          Rails.logger.warn("DEBUG roles_card doesn't respond to item_names")
+          return false
+        end
+      rescue => e
+        Rails.logger.error("DEBUG Error getting item_names: #{e.message}")
+        return false
+      end
     rescue StandardError => e
       Rails.logger.warn("Role check failed for #{user_card.name}: #{e.message}")
+      Rails.logger.warn(e.backtrace.join("\n"))
       false
     end
 
