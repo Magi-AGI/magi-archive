@@ -56,11 +56,6 @@ Decko.application.routes.draw do
       # Query endpoint (Phase 3)
       post 'run_query', to: 'query#run'
 
-      # Jobs endpoints (Phase 3)
-      namespace :jobs do
-        post 'spoiler-scan', to: 'jobs#spoiler_scan'
-      end
-
       # Validation endpoints
       namespace :validation do
         post 'tags', to: 'validation#validate_tags'
