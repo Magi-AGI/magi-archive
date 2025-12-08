@@ -4,9 +4,9 @@ module Api
   module Mcp
     module Admin
       # Admin controller for managing MCP API keys via web interface
-      # Requires admin authentication (implement in BaseController or override here)
-      class ApiKeysController < ApplicationController
-        before_action :require_admin_authentication
+      # Requires admin authentication
+      class ApiKeysController < BaseController
+        before_action :require_admin_role
         before_action :set_api_key, only: [:show, :update, :destroy]
 
         # GET /api/mcp/admin/api_keys
@@ -196,22 +196,15 @@ module Api
           }, status: :not_found
         end
 
-        def require_admin_authentication
-          # TODO: Implement admin authentication check
-          # For now, this is a placeholder - implement according to your auth system
-          #
-          # Example:
-          # unless current_user&.admin?
-          #   render json: { error: "unauthorized", message: "Admin access required" }, status: :unauthorized
-          # end
-          #
-          # Or use Decko's built-in authentication
+        def require_admin_role
+          unless current_role == "admin"
+            render_forbidden("This endpoint requires admin role", { required_role: "admin", current_role: current_role })
+          end
         end
 
         def current_admin_name
-          # TODO: Return current admin user's name
-          # Example: current_user&.name || "admin"
-          "admin"
+          # Return the current MCP account name (from JWT)
+          current_account&.name || "admin"
         end
 
         def parse_expiration(value)

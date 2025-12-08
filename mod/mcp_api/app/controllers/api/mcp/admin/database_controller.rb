@@ -7,8 +7,8 @@ module Api
     module Admin
       # Admin controller for database backup operations
       # Requires admin authentication
-      class DatabaseController < ApplicationController
-        before_action :require_admin_authentication
+      class DatabaseController < BaseController
+        before_action :require_admin_role
 
         # GET /api/mcp/admin/database/backup
         # Download a database backup
@@ -200,15 +200,10 @@ module Api
           end
         end
 
-        def require_admin_authentication
-          # TODO: Implement admin authentication check
-          # This should verify the user has admin role
-          # For now, using placeholder - implement according to your auth system
-          #
-          # Example with JWT token:
-          # unless current_role == "admin"
-          #   render json: { error: "unauthorized", message: "Admin access required" }, status: :unauthorized
-          # end
+        def require_admin_role
+          unless current_role == "admin"
+            render_forbidden("This endpoint requires admin role", { required_role: "admin", current_role: current_role })
+          end
         end
 
         def format_file_size(bytes)
