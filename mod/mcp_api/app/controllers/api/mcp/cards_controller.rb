@@ -286,13 +286,13 @@ module Api
         if params[:updated_since] && params[:updated_before]
           # Both: use Decko's 'all' conjunction for AND logic
           query[:all] = [
-            { updated_at: [">=", Time.parse(params[:updated_since])] },
-            { updated_at: ["<=", Time.parse(params[:updated_before])] }
+            { updated_at: [">=", Time.parse(params[:updated_since]).to_s] },
+            { updated_at: ["<=", Time.parse(params[:updated_before]).to_s] }
           ]
         elsif params[:updated_since]
-          query[:updated_at] = [">=", Time.parse(params[:updated_since])]
+          query[:updated_at] = [">=", Time.parse(params[:updated_since]).to_s]
         elsif params[:updated_before]
-          query[:updated_at] = ["<=", Time.parse(params[:updated_before])]
+          query[:updated_at] = ["<=", Time.parse(params[:updated_before]).to_s]
         end
 
         query
