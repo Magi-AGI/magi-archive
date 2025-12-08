@@ -284,13 +284,11 @@ module Api
 
         # Handle date range queries properly
         if params[:updated_since] && params[:updated_before]
-          # Both: create range query with AND condition
-          query[:updated_at] = {
-            and: [
-              [">=", Time.parse(params[:updated_since])],
-              ["<=", Time.parse(params[:updated_before])]
-            ]
-          }
+          # Both: use Decko's 'all' conjunction for AND logic
+          query[:all] = [
+            { updated_at: [">=", Time.parse(params[:updated_since])] },
+            { updated_at: ["<=", Time.parse(params[:updated_before])] }
+          ]
         elsif params[:updated_since]
           query[:updated_at] = [">=", Time.parse(params[:updated_since])]
         elsif params[:updated_before]
