@@ -49,6 +49,14 @@ module Api
           result = Mcp::UserAuthenticator.authenticate(username, password)
         rescue Mcp::UserAuthenticator::AuthenticationError => e
           return render_error("authentication_failed", e.message, {}, status: :unauthorized)
+        rescue NameError => e
+          Rails.logger.error("NameError in auth: #{e.class}: #{e.message}")
+          Rails.logger.error(e.backtrace.first(10).join("\n"))
+          return render_error("internal_error", "Authentication system error: #{e.message}", { exception: e.class.name })
+        rescue StandardError => e
+          Rails.logger.error("Error in auth: #{e.class}: #{e.message}")
+          Rails.logger.error(e.backtrace.first(10).join("\n"))
+          return render_error("internal_error", "Unexpected error", { exception: e.class.name })
         end
 
         user_card = result[:user]
