@@ -206,7 +206,7 @@ module Api
       def set_card
         name = params[:name]
         @card = Card::Auth.as(current_account.name) do
-          Card.fetch(name, skip_modules: true)
+          Card.fetch(name)
         end
 
         unless @card
@@ -304,7 +304,7 @@ module Api
 
       def find_type_by_name(name)
         Card::Auth.as(current_account.name) do
-          type_card = Card.fetch(name, skip_modules: true)
+          type_card = Card.fetch(name)
           return type_card if type_card&.type_id == Card::CardtypeID
 
           Card.search(type: "Cardtype", name: ["match", name]).first

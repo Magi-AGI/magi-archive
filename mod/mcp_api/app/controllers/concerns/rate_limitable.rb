@@ -54,8 +54,21 @@ module RateLimitable
   end
 
   def time_until_reset(key)
-    ttl = Rails.cache.fetch(key) { 3600 }
-    ttl
+    # Get the actual TTL of the cache key from Redis/store
+    # Rails.cache doesn't expose TTL directly, so we access the underlying store
+    if Rails.cache.respond_to?(:redis)
+      # Redis cache store
+      Rails.cache.redis.ttl(key) || 3600
+    elsif defined?(Dalli) && Rails.cache.is_a?(ActiveSupport::Cache::MemCacheStore)
+      # Memcached doesn't support TTL lookup, return default window
+      3600
+    else
+      # For other stores or if key doesn't exist, return default window
+      3600
+    end
+  rescue StandardError
+    # Fallback to default if anything goes wrong
+    3600
   end
 
   def rate_limit_per_hour

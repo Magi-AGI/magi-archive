@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "../../../../lib/mcp/api_key_manager"
+
 module Api
   module Mcp
     module Admin
@@ -12,29 +14,38 @@ module Api
         # GET /api/mcp/admin/api_keys
         # List all API keys
         def index
-          @keys = McpApiKey.order(created_at: :desc)
+          keys = ::Mcp::ApiKeyManager.all_active
+          key_data = keys.map do |key_card|
+            metadata = ::Mcp::ApiKeyManager.get_metadata(key_card)
+            usage = ::Mcp::ApiKeyManager.usage_info(key_card)
+
+            {
+              id: key_card.id,
+              name: metadata["name"],
+              key_prefix: metadata["key_prefix"],
+              allowed_roles: metadata["allowed_roles"],
+              status: usage[:status],
+              rate_limit_per_hour: metadata["rate_limit_per_hour"],
+              last_used_at: usage[:last_used],
+              created_at: metadata["created_at"],
+              created_by: metadata["created_by"],
+              expires_at: metadata["expires_at"],
+              masked_key: "#{metadata['key_prefix']}***"
+            }
+          end
+
+          # Count statuses
+          active_count = key_data.count { |k| k[:status] == "active" }
+          expired_count = key_data.count { |k| k[:status] == "expired" }
+          inactive_count = key_data.count { |k| k[:status] == "inactive" }
 
           render json: {
-            keys: @keys.map do |key|
-              {
-                id: key.id,
-                name: key.name,
-                key_prefix: key.key_prefix,
-                allowed_roles: key.allowed_roles,
-                status: key.status,
-                rate_limit_per_hour: key.rate_limit_per_hour,
-                last_used_at: key.last_used_at&.iso8601,
-                created_at: key.created_at.iso8601,
-                created_by: key.created_by,
-                expires_at: key.expires_at&.iso8601,
-                masked_key: key.masked_key
-              }
-            end,
+            keys: key_data,
             summary: {
-              total: @keys.count,
-              active: @keys.active.count,
-              expired: @keys.expired.count,
-              inactive: @keys.inactive.count
+              total: key_data.count,
+              active: active_count,
+              expired: expired_count,
+              inactive: inactive_count
             }
           }
         end
@@ -42,31 +53,34 @@ module Api
         # GET /api/mcp/admin/api_keys/:id
         # Show specific API key details
         def show
+          metadata = ::Mcp::ApiKeyManager.get_metadata(@key_card)
+          usage = ::Mcp::ApiKeyManager.usage_info(@key_card)
+
           render json: {
-            id: @key.id,
-            name: @key.name,
-            key_prefix: @key.key_prefix,
-            allowed_roles: @key.allowed_roles,
-            status: @key.status,
-            active: @key.active,
-            expired: @key.expired?,
-            rate_limit_per_hour: @key.rate_limit_per_hour,
-            last_used_at: @key.last_used_at&.iso8601,
-            created_at: @key.created_at.iso8601,
-            created_by: @key.created_by,
-            contact_email: @key.contact_email,
-            description: @key.description,
-            expires_at: @key.expires_at&.iso8601,
-            days_until_expiration: @key.days_until_expiration,
-            usage_info: @key.usage_info,
-            masked_key: @key.masked_key
+            id: @key_card.id,
+            name: metadata["name"],
+            key_prefix: metadata["key_prefix"],
+            allowed_roles: metadata["allowed_roles"],
+            status: usage[:status],
+            active: metadata["active"],
+            expired: usage[:status] == "expired",
+            rate_limit_per_hour: metadata["rate_limit_per_hour"],
+            last_used_at: usage[:last_used],
+            created_at: metadata["created_at"],
+            created_by: metadata["created_by"],
+            contact_email: metadata["contact_email"],
+            description: metadata["description"],
+            expires_at: metadata["expires_at"],
+            days_until_expiration: calculate_days_until_expiration(metadata["expires_at"]),
+            usage_info: usage,
+            masked_key: "#{metadata['key_prefix']}***"
           }
         end
 
         # POST /api/mcp/admin/api_keys
         # Generate a new API key
         def create
-          result = McpApiKey.generate(
+          result = ::Mcp::ApiKeyManager.generate(
             name: params[:name] || "Key #{Time.current.to_i}",
             roles: Array(params[:roles]).presence || ["user"],
             rate_limit: params[:rate_limit]&.to_i || 1000,
@@ -76,77 +90,89 @@ module Api
             description: params[:description]
           )
 
+          metadata = ::Mcp::ApiKeyManager.get_metadata(result[:card])
+
           render json: {
             message: "API key generated successfully",
             key: {
-              id: result[:record].id,
-              name: result[:record].name,
-              allowed_roles: result[:record].allowed_roles,
+              id: result[:card].id,
+              name: metadata["name"],
+              allowed_roles: metadata["allowed_roles"],
               api_key: result[:api_key],  # Only time this is returned!
-              key_prefix: result[:record].key_prefix,
-              rate_limit_per_hour: result[:record].rate_limit_per_hour,
-              expires_at: result[:record].expires_at&.iso8601,
-              created_at: result[:record].created_at.iso8601
+              key_prefix: metadata["key_prefix"],
+              rate_limit_per_hour: metadata["rate_limit_per_hour"],
+              expires_at: metadata["expires_at"],
+              created_at: metadata["created_at"]
             },
             warning: "Store this API key securely - it will never be shown again!"
           }, status: :created
-        rescue ActiveRecord::RecordInvalid => e
+        rescue ArgumentError => e
           render json: {
             error: "validation_error",
-            message: e.message,
-            details: e.record.errors.as_json
+            message: e.message
           }, status: :unprocessable_entity
         end
 
         # PATCH /api/mcp/admin/api_keys/:id
         # Update API key settings
         def update
-          update_params = {}
-          update_params[:rate_limit_per_hour] = params[:rate_limit_per_hour].to_i if params[:rate_limit_per_hour]
-          update_params[:active] = params[:active] if params.key?(:active)
-          update_params[:expires_at] = parse_expiration(params[:expires_at]) if params.key?(:expires_at)
-          update_params[:description] = params[:description] if params.key?(:description)
-          update_params[:contact_email] = params[:contact_email] if params.key?(:contact_email)
+          metadata = ::Mcp::ApiKeyManager.get_metadata(@key_card)
 
-          if update_params.empty?
-            return render json: { error: "no_updates", message: "No valid update parameters provided" },
-                          status: :bad_request
+          # Update metadata fields
+          metadata["rate_limit_per_hour"] = params[:rate_limit_per_hour].to_i if params[:rate_limit_per_hour]
+          metadata["active"] = params[:active] if params.key?(:active)
+          metadata["description"] = params[:description] if params.key?(:description)
+          metadata["contact_email"] = params[:contact_email] if params.key?(:contact_email)
+
+          if params.key?(:expires_at)
+            metadata["expires_at"] = parse_expiration(params[:expires_at])&.iso8601
           end
 
-          @key.update!(update_params)
+          # Save updated metadata
+          Card::Auth.as_bot do
+            metadata_card = Card.fetch("#{@key_card.name}+metadata")
+            metadata_card.update!(content: metadata.to_json)
+          end
+
+          usage = ::Mcp::ApiKeyManager.usage_info(@key_card)
 
           render json: {
             message: "API key updated successfully",
             key: {
-              id: @key.id,
-              name: @key.name,
-              status: @key.status,
-              active: @key.active,
-              rate_limit_per_hour: @key.rate_limit_per_hour,
-              expires_at: @key.expires_at&.iso8601,
-              description: @key.description,
-              contact_email: @key.contact_email
+              id: @key_card.id,
+              name: metadata["name"],
+              status: usage[:status],
+              active: metadata["active"],
+              rate_limit_per_hour: metadata["rate_limit_per_hour"],
+              expires_at: metadata["expires_at"],
+              description: metadata["description"],
+              contact_email: metadata["contact_email"]
             }
           }
-        rescue ActiveRecord::RecordInvalid => e
+        rescue StandardError => e
           render json: {
-            error: "validation_error",
-            message: e.message,
-            details: e.record.errors.as_json
+            error: "update_error",
+            message: e.message
           }, status: :unprocessable_entity
         end
 
         # DELETE /api/mcp/admin/api_keys/:id
-        # Delete an API key
+        # Delete an API key (hard delete the Card)
         def destroy
-          @key.destroy!
+          metadata = ::Mcp::ApiKeyManager.get_metadata(@key_card)
+          key_name = metadata["name"]
+          key_prefix = metadata["key_prefix"]
+
+          Card::Auth.as_bot do
+            @key_card.delete!
+          end
 
           render json: {
             message: "API key deleted successfully",
             deleted_key: {
-              id: @key.id,
-              name: @key.name,
-              key_prefix: @key.key_prefix
+              id: @key_card.id,
+              name: key_name,
+              key_prefix: key_prefix
             }
           }
         end
@@ -155,15 +181,17 @@ module Api
         # Deactivate an API key
         def deactivate
           set_api_key
-          @key.deactivate!
+          ::Mcp::ApiKeyManager.deactivate!(@key_card)
+          metadata = ::Mcp::ApiKeyManager.get_metadata(@key_card)
+          usage = ::Mcp::ApiKeyManager.usage_info(@key_card)
 
           render json: {
             message: "API key deactivated",
             key: {
-              id: @key.id,
-              name: @key.name,
-              status: @key.status,
-              active: @key.active
+              id: @key_card.id,
+              name: metadata["name"],
+              status: usage[:status],
+              active: metadata["active"]
             }
           }
         end
@@ -172,15 +200,17 @@ module Api
         # Activate an API key
         def activate
           set_api_key
-          @key.activate!
+          ::Mcp::ApiKeyManager.activate!(@key_card)
+          metadata = ::Mcp::ApiKeyManager.get_metadata(@key_card)
+          usage = ::Mcp::ApiKeyManager.usage_info(@key_card)
 
           render json: {
             message: "API key activated",
             key: {
-              id: @key.id,
-              name: @key.name,
-              status: @key.status,
-              active: @key.active
+              id: @key_card.id,
+              name: metadata["name"],
+              status: usage[:status],
+              active: metadata["active"]
             }
           }
         end
@@ -188,8 +218,16 @@ module Api
         private
 
         def set_api_key
-          @key = McpApiKey.find(params[:id])
-        rescue ActiveRecord::RecordNotFound
+          Card::Auth.as_bot do
+            @key_card = Card.fetch(params[:id].to_i)
+            unless @key_card&.type_name == "MCP API Key"
+              return render json: {
+                error: "not_found",
+                message: "API key not found"
+              }, status: :not_found
+            end
+          end
+        rescue Card::Error::NotFound
           render json: {
             error: "not_found",
             message: "API key not found"
@@ -219,6 +257,16 @@ module Api
           else
             value
           end
+        end
+
+        def calculate_days_until_expiration(expires_at)
+          return nil if expires_at.blank?
+
+          expiry_time = Time.parse(expires_at)
+          days = ((expiry_time - Time.current) / 1.day).ceil
+          days.positive? ? days : 0
+        rescue StandardError
+          nil
         end
       end
     end
