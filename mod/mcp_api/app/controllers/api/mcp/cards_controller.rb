@@ -232,6 +232,9 @@ module Api
       end
 
       def can_view_card?(card)
+        # Filter out trashed/deleted cards
+        return false if card.trash
+
         # User role cannot see GM or AI content
         return false if current_role == "user" && (card.name.include?("+GM") || card.name.include?("+AI"))
 
@@ -314,6 +317,9 @@ module Api
             in_range
           end
         end
+
+        # Filter out trashed/deleted cards (all roles)
+        cards = cards.reject { |c| c.trash }
 
         # Filter out GM/AI content for user role
         if current_role == "user"
