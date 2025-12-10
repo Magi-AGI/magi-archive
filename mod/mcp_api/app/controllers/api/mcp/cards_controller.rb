@@ -527,15 +527,41 @@ module Api
       end
 
       def card_full_json(card)
-        {
+        # Detect virtual cards: simple name (no +), empty ancestors, empty/minimal content
+        # Virtual cards are junction cards that exist primarily for naming, with actual
+        # content in compound child cards (e.g., "Trallox" vs "Games+...+Trallox")
+        is_virtual = detect_virtual_card(card)
+        
+        json = {
           name: card.name,
           id: card.id,
           type: card.type_name,
           codename: card.codename,
           content: card.content,
           updated_at: card.updated_at.iso8601,
-          created_at: card.created_at.iso8601
+          created_at: card.created_at.iso8601,
+          virtual_card: is_virtual
         }
+        
+        # Include ancestor information if available (helps detect virtual cards client-side)
+        if card.respond_to?(:ancestors) && card.ancestors.present?
+          json[:ancestors] = card.ancestors.map { |a| { name: a.name, id: a.id } }
+        end
+        
+        json
+      end
+      
+      # Detect if a card is a virtual/junction card
+      # Virtual cards typically have:
+      # 1. Simple name (no + signs indicating compound structure)
+      # 2. No ancestors (not part of a hierarchy)
+      # 3. Empty or minimal content (actual content is in compound child cards)
+      def detect_virtual_card(card)
+        simple_name = !card.name.include?("+")
+        no_ancestors = !card.respond_to?(:ancestors) || card.ancestors.blank?
+        minimal_content = card.content.blank? || card.content.strip.length < 10
+        
+        simple_name && no_ancestors && minimal_content
       end
 
       # Fetch cards that reference/link to the given card
