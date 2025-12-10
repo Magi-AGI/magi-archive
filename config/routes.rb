@@ -69,7 +69,12 @@ Decko.application.routes.draw do
       # Admin endpoints (admin role required)
       namespace :admin do
         resources :api_keys, only: [:index, :show, :create, :update, :destroy]
-        post 'database/backup', to: 'database#backup'
+        
+        # Database backup operations (flat routes, no nested namespace)
+        get 'database/backup', to: 'database#backup'
+        get 'database/backup/list', to: 'database#list_backups'
+        get 'database/backup/download/:filename', to: 'database#download_backup', constraints: { filename: /[^\/]+/ }
+        delete 'database/backup/:filename', to: 'database#delete_backup', constraints: { filename: /[^\/]+/ }
       end
     end
   end
