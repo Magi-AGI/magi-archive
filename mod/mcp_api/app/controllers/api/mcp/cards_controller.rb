@@ -3,8 +3,8 @@
 module Api
   module Mcp
     class CardsController < BaseController
-      before_action :set_card, only: [:show, :update, :destroy, :children, :referers, :nested_in, :nests, :links, :linked_by]
-      before_action :check_admin_role!, only: [:destroy]
+      before_action :set_card, only: [:show, :update, :destroy, :rename, :children, :referers, :nested_in, :nests, :links, :linked_by]
+      before_action :check_admin_role!, only: [:destroy, :rename]
 
       # GET /api/mcp/cards
       # Search/list cards with filters
@@ -91,6 +91,38 @@ module Api
         render json: { status: "deleted", name: @card.name }, status: :ok
       rescue StandardError => e
         render_error("delete_failed", "Could not delete card", { error: e.message })
+      end
+
+      # PUT /api/mcp/cards/:name/rename
+      # Rename card (admin only)
+      def rename
+        new_name = params[:new_name]
+        return render_error("validation_error", "Missing new_name parameter") unless new_name
+
+        # update_referers defaults to true (update all references when renaming)
+        # Set to false to skip updating referers
+        update_referers = params[:update_referers].nil? ? true : params[:update_referers]
+
+        old_name = @card.name
+
+        Card::Auth.as(current_account.name) do
+          @card.name = new_name
+          # If update_referers is false, skip updating referer content
+          @card.skip = :update_referer_content unless update_referers
+          @card.save!
+        end
+
+        render json: {
+          status: "renamed",
+          old_name: old_name,
+          new_name: @card.name,
+          updated_referers: update_referers,
+          card: card_full_json(@card)
+        }, status: :ok
+      rescue ActiveRecord::RecordInvalid => e
+        render_error("validation_error", "Rename failed", { errors: e.record.errors.full_messages })
+      rescue StandardError => e
+        render_error("rename_failed", "Could not rename card", { error: e.message })
       end
 
       # GET /api/mcp/cards/:name/children

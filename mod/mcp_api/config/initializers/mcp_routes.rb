@@ -18,6 +18,7 @@ Rails.application.routes.append do
       resources :cards, param: :name, only: [:index, :show, :create, :update, :destroy] do
         member do
           get :children
+          put :rename
         end
 
         collection do
