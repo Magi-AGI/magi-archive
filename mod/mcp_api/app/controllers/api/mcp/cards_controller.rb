@@ -12,8 +12,9 @@ module Api
         query = build_search_query
         limit = [(params[:limit] || 50).to_i, 100].min
         offset = (params[:offset] || 0).to_i
+        include_virtual = params[:include_virtual] == "true" || params[:include_virtual] == true
 
-        cards = execute_search(query, limit, offset)
+        cards = execute_search(query, limit, offset, include_virtual: include_virtual)
         total = count_search_results(query)
 
         render json: {
@@ -133,8 +134,10 @@ module Api
         limit = [(params[:limit] || 50).to_i, 100].min
         offset = (params[:offset] || 0).to_i
         depth = (params[:depth] || 1).to_i
+        include_virtual = params[:include_virtual] == "true" || params[:include_virtual] == true
 
         children_cards = fetch_children(@card, depth: depth).select { |c| can_view_card?(c) }
+        children_cards = children_cards.reject { |c| detect_virtual_card(c) } unless include_virtual
 
         # Apply pagination
         total = children_cards.size
@@ -333,7 +336,7 @@ module Api
         query
       end
 
-      def execute_search(query, limit, offset)
+      def execute_search(query, limit, offset, include_virtual: false)
         # Execute search with proper auth context
         cards = Card::Auth.as(current_account.name) do
           Card.search(query.merge(limit: limit, offset: offset))
@@ -354,11 +357,14 @@ module Api
         cards = cards.reject { |c| c.trash }
 
         # Filter out GM/AI content for user role
-        if current_role == "user"
+        cards = if current_role == "user"
           cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
         else
           cards
         end
+
+        # Filter out virtual cards (empty junction cards with no content) unless explicitly requested
+        include_virtual ? cards : cards.reject { |c| detect_virtual_card(c) }
       end
 
       def count_search_results(query)
