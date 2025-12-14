@@ -133,6 +133,7 @@ module Api
 
         limit = [(params[:limit] || 50).to_i, 100].min
         offset = (params[:offset] || 0).to_i
+        include_virtual = params[:include_virtual] == "true" || params[:include_virtual] == true
         depth = (params[:depth] || 1).to_i
         include_virtual = params[:include_virtual] == "true" || params[:include_virtual] == true
 
@@ -357,14 +358,11 @@ module Api
         cards = cards.reject { |c| c.trash }
 
         # Filter out GM/AI content for user role
-        cards = if current_role == "user"
+        if current_role == "user"
           cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
         else
           cards
         end
-
-        # Filter out virtual cards (empty junction cards with no content) unless explicitly requested
-        include_virtual ? cards : cards.reject { |c| detect_virtual_card(c) }
       end
 
       def count_search_results(query)
@@ -601,6 +599,11 @@ module Api
       # 2. No ancestors (not part of a hierarchy)
       # 3. Empty or minimal content (actual content is in compound child cards)
       def detect_virtual_card(card)
+        # Child cards (with left_id) are never virtual, even if they have simple names
+        # This is because Decko stores child cards with just the tail name
+        is_child = card.respond_to?(:left_id) && card.left_id.present?
+        return false if is_child
+
         simple_name = !card.name.include?("+")
         no_ancestors = !card.respond_to?(:ancestors) || card.ancestors.blank?
         minimal_content = card.content.blank? || card.content.strip.length < 10
