@@ -358,11 +358,14 @@ module Api
         cards = cards.reject { |c| c.trash }
 
         # Filter out GM/AI content for user role
-        if current_role == "user"
+        cards = if current_role == "user"
           cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
         else
           cards
         end
+
+        # Filter out virtual cards (empty junction cards with no content) unless explicitly requested
+        include_virtual ? cards : cards.reject { |c| detect_virtual_card(c) }
       end
 
       def count_search_results(query)
