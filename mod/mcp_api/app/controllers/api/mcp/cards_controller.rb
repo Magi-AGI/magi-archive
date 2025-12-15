@@ -271,7 +271,15 @@ module Api
         # Filter out trashed/deleted cards
         return false if card.trash
 
-        # User role cannot see GM or AI content
+        # Check Decko's built-in permission system
+        # This respects +*read rules set on cards
+        can_read = Card::Auth.as(current_account.name) do
+          card.ok?(:read)
+        end
+        
+        return false unless can_read
+
+        # Additional MCP-specific filtering: User role cannot see GM or AI content
         return false if current_role == "user" && (card.name.include?("+GM") || card.name.include?("+AI"))
 
         true
