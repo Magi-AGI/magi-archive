@@ -43,6 +43,7 @@ Decko.application.routes.draw do
           get :nests
           get :links
           get :linked_by
+          put :rename
         end
 
         collection do

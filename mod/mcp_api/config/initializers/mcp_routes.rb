@@ -14,17 +14,31 @@ Rails.application.routes.append do
       get "types", to: "types#index"
       get "types/:name", to: "types#show"
 
+      # Tags endpoints
+      get "tags", to: "tags#index"
+      get "tags/:tag_name/cards", to: "tags#cards"
+      post "tags/suggest", to: "tags#suggest"
+
       # Cards endpoints
       resources :cards, param: :name, only: [:index, :show, :create, :update, :destroy] do
         member do
           get :children
-          put :rename
+          # Relationship endpoints
+          get :referers
+          get :linked_by
+          get :nested_in
+          get :nests
+          get :links
         end
 
         collection do
           post :batch
         end
       end
+
+      # Rename endpoint - defined separately to handle complex card names
+      # Using glob constraint to capture full path including encoded characters
+      put "cards/*name/rename", to: "cards#rename", format: false, constraints: { name: /.*/ }
 
       # Render endpoints (Phase 2)
       namespace :render do

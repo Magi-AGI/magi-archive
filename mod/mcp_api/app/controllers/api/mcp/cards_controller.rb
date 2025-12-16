@@ -15,7 +15,7 @@ module Api
         include_virtual = params[:include_virtual] == "true" || params[:include_virtual] == true
 
         cards = execute_search(query, limit, offset, include_virtual: include_virtual)
-        total = count_search_results(query)
+        total = count_search_results(query, include_virtual: include_virtual)
 
         render json: {
           cards: cards.map { |c| card_summary_json(c) },
@@ -248,6 +248,51 @@ module Api
         render json: { results: results }, status: status
       end
 
+
+      # GET /api/mcp/cards/:name/referers
+      def referers
+        card = fetch_card(params[:name])
+        referers = Card::Auth.as(current_account.name) { card.referers.to_a }
+        render json: { card_name: card.name, referers: referers.map { |c| format_card_summary(c) }, referers_count: referers.size }
+      rescue ActiveRecord::RecordNotFound
+        render_not_found('Card', params[:name])
+      end
+
+      # GET /api/mcp/cards/:name/linked_by
+      def linked_by
+        card = fetch_card(params[:name])
+        linked_by = Card::Auth.as(current_account.name) { card.referencers.to_a }
+        render json: { card_name: card.name, linked_by: linked_by.map { |c| format_card_summary(c) }, linked_by_count: linked_by.size }
+      rescue ActiveRecord::RecordNotFound
+        render_not_found('Card', params[:name])
+      end
+
+      # GET /api/mcp/cards/:name/nested_in
+      def nested_in
+        card = fetch_card(params[:name])
+        nested_in = Card::Auth.as(current_account.name) { card.nesters.to_a }
+        render json: { card_name: card.name, nested_in: nested_in.map { |c| format_card_summary(c) }, nested_in_count: nested_in.size }
+      rescue ActiveRecord::RecordNotFound
+        render_not_found('Card', params[:name])
+      end
+
+      # GET /api/mcp/cards/:name/nests
+      def nests
+        card = fetch_card(params[:name])
+        nests = Card::Auth.as(current_account.name) { card.nestees.to_a }
+        render json: { card_name: card.name, nests: nests.map { |c| format_card_summary(c) }, nests_count: nests.size }
+      rescue ActiveRecord::RecordNotFound
+        render_not_found('Card', params[:name])
+      end
+
+      # GET /api/mcp/cards/:name/links
+      def links
+        card = fetch_card(params[:name])
+        links = Card::Auth.as(current_account.name) { card.referencees.to_a }
+        render json: { card_name: card.name, links: links.map { |c| format_card_summary(c) }, links_count: links.size }
+      rescue ActiveRecord::RecordNotFound
+        render_not_found('Card', params[:name])
+      end
       private
 
       def set_card
@@ -345,42 +390,78 @@ module Api
         query
       end
 
-      def execute_search(query, limit, offset, include_virtual: false)
-        # Execute search with proper auth context
-        cards = Card::Auth.as(current_account.name) do
-          Card.search(query.merge(limit: limit, offset: offset))
-        end
+def execute_search(query, limit, offset, include_virtual: false)
+  # Fetch more cards than needed to account for post-filtering
+  # We'll filter then apply offset/limit
+  fetch_limit = [limit * 10, 1000].max  # Fetch enough to handle filtering
 
-        # Apply date range post-filter if needed
-        # Required because Decko CQL doesn't support updated_at filtering
-        if @filter_date_range
-          cards = cards.select do |c|
-            in_range = true
-            in_range = in_range && (c.updated_at >= @filter_date_range[:since]) if @filter_date_range[:since]
-            in_range = in_range && (c.updated_at <= @filter_date_range[:before]) if @filter_date_range[:before]
-            in_range
-          end
-        end
+  cards = Card::Auth.as(current_account.name) do
+    Card.search(query.merge(limit: fetch_limit))
+  end
 
-        # Filter out trashed/deleted cards (all roles)
-        cards = cards.reject { |c| c.trash }
+  # Apply date range post-filter if needed
+  if @filter_date_range
+    before_date = cards.size
+    cards = cards.select do |c|
+      in_range = true
+      in_range = false if @filter_date_range[:since] && c.updated_at < @filter_date_range[:since]
+      in_range = false if @filter_date_range[:before] && c.updated_at > @filter_date_range[:before]
+      in_range
+    end
+  end
 
-        # Filter out GM/AI content for user role
-        cards = if current_role == "user"
-          cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
-        else
-          cards
-        end
+  # Filter out trashed/deleted cards (all roles)
+  before_trash = cards.size
+  cards = cards.reject { |c| c.trash }
 
-        # Filter out virtual cards (empty junction cards with no content) unless explicitly requested
-        include_virtual ? cards : cards.reject { |c| detect_virtual_card(c) }
+  # Filter out GM/AI content for user role
+  if current_role == "user"
+    before_gm = cards.size
+    cards = cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
+  end
+
+  # Filter out virtual cards unless explicitly requested
+  unless include_virtual
+    before_virtual = cards.size
+    cards = cards.reject { |c| detect_virtual_card(c) }
+  end
+
+  # NOW apply offset and limit to filtered results
+  result = cards.drop(offset).take(limit)
+
+  result
+end
+
+      def count_search_results(query, include_virtual: true)
+  Card::Auth.as(current_account.name) do
+    cards = Card.search(query.merge(limit: 10000))
+    
+    before_trash = cards.size
+    cards = cards.reject { |c| c.trash }
+    
+    if current_role == "user"
+      before_gm = cards.size
+      cards = cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
+    end
+    
+    unless include_virtual
+      before_virtual = cards.size
+      cards = cards.reject { |c| detect_virtual_card(c) }
+    end
+    
+    if @filter_date_range
+      before_date = cards.size
+      cards = cards.select do |c|
+        in_range = true
+        in_range = in_range && (c.updated_at >= @filter_date_range[:since]) if @filter_date_range[:since]
+        in_range = in_range && (c.updated_at <= @filter_date_range[:before]) if @filter_date_range[:before]
+        in_range
       end
-
-      def count_search_results(query)
-        Card::Auth.as(current_account.name) do
-          Card.search(query.merge(return: "count"))
-        end
-      end
+    end
+    
+    cards.size
+  end
+end
 
       def find_type_by_name(name)
         Card::Auth.as(current_account.name) do
