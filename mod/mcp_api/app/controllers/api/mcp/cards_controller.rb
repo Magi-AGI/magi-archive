@@ -361,7 +361,12 @@ module Api
             }
           else  # "name" or any other value defaults to name search
             # Search in name only (default, fastest)
-            query[:part] = params[:q]
+            name_conditions = build_hybrid_name_conditions(params[:q])
+            if name_conditions.size == 1
+              query.merge!(name_conditions.first)
+            else
+              query[:any] = name_conditions
+            end
           end
         end
 
@@ -389,6 +394,41 @@ module Api
 
         query
       end
+
+
+      # Build hybrid search conditions for compound card name search
+      # This enables substring matching by:
+      # 1. Searching simple cards with "match" (works for substring on name column)
+      # 2. Finding compound cards that have matching simple cards as parts
+      def build_hybrid_name_conditions(search_term)
+        conditions = []
+
+        # 1. Direct name match for simple cards (name column is populated for simple cards)
+        conditions << { name: ["match", search_term] }
+
+        # 2. Find simple cards matching the search term, then search for compound cards
+        # that have those as parts
+        begin
+          matching_simple_cards = Card::Auth.as(current_account.name) do
+            Card.search(
+              name: ["match", search_term],
+              limit: 50,
+              return: :name
+            )
+          end
+
+          # Add part conditions for each matching simple card
+          # This finds compound cards like "Parent+MatchingCard+Child"
+          matching_simple_cards.each do |card_name|
+            conditions << { part: card_name }
+          end
+        rescue => e
+          Rails.logger.warn "Hybrid name search failed: #{e.message}"
+        end
+
+        conditions
+      end
+
 
 def execute_search(query, limit, offset, include_virtual: false)
   # Fetch more cards than needed to account for post-filtering
