@@ -356,12 +356,12 @@ module Api
           when "both"
             # Search in both name and content using OR condition
             query[:or] = {
-              name: ["match", params[:q]],
+              part: params[:q],
               content: ["match", params[:q]]
             }
           else  # "name" or any other value defaults to name search
             # Search in name only (default, fastest)
-            query[:name] = ["match", params[:q]]
+            query[:part] = params[:q]
           end
         end
 
