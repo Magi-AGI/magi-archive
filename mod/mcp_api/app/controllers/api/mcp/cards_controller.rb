@@ -15,7 +15,12 @@ module Api
         include_virtual = params[:include_virtual] == "true" || params[:include_virtual] == true
 
         cards = execute_search(query, limit, offset, include_virtual: include_virtual)
-        total = count_search_results(query, include_virtual: include_virtual)
+        # For multi-word searches, use actual filtered count instead of pre-filter count
+        if @name_filter_words && @name_filter_words.any?
+          total = cards.size
+        else
+          total = count_search_results(query, include_virtual: include_virtual)
+        end
 
         render json: {
           cards: cards.map { |c| card_summary_json(c) },
@@ -360,8 +365,19 @@ module Api
               content: ["match", params[:q]]
             }
           else  # "name" or any other value defaults to name search
-            # Search in name only (default, fastest)
-            name_conditions = build_hybrid_name_conditions(params[:q])
+            # For multi-word searches, search broadly then filter by full name
+            search_words = params[:q].to_s.split(/\s+/).reject(&:empty?)
+            if search_words.size > 1
+              @name_filter_words = search_words
+              # Search for ALL words to find deeply nested cards
+              all_conditions = []
+              search_words.each do |word|
+                all_conditions += build_single_word_conditions(word)
+              end
+              name_conditions = all_conditions.uniq { |c| c.to_s }
+            else
+              name_conditions = build_hybrid_name_conditions(params[:q])
+            end
             if name_conditions.size == 1
               query.merge!(name_conditions.first)
             else
@@ -397,37 +413,63 @@ module Api
 
 
       # Build hybrid search conditions for compound card name search
-      # This enables substring matching by:
-      # 1. Searching simple cards with "match" (works for substring on name column)
-      # 2. Finding compound cards that have matching simple cards as parts
-      def build_hybrid_name_conditions(search_term)
-        conditions = []
+# This enables substring matching by:
+# 1. Searching simple cards with "match" (works for substring on name column)
+# 2. Finding compound cards that have matching simple cards as parts
+# For multi-word searches like "Tharaneth roots", ALL words must match
+def build_hybrid_name_conditions(search_term)
+  # Split search term into words for multi-word searches
+  words = search_term.to_s.split(/\s+/).reject(&:empty?)
+  
+  if words.size <= 1
+    # Single word - use simple approach
+    build_single_word_conditions(words.first || search_term)
+  else
+    # Multi-word search - each word must match (AND logic)
+    build_multi_word_conditions(words)
+  end
+end
 
-        # 1. Direct name match for simple cards (name column is populated for simple cards)
-        conditions << { name: ["match", search_term] }
+# Build conditions for a single search word
+def build_single_word_conditions(word)
+  conditions = []
 
-        # 2. Find simple cards matching the search term, then search for compound cards
-        # that have those as parts
-        begin
-          matching_simple_cards = Card::Auth.as(current_account.name) do
-            Card.search(
-              name: ["match", search_term],
-              limit: 50,
-              return: :name
-            )
-          end
+  # 1. Direct name match for simple cards
+  conditions << { name: ["match", word] }
 
-          # Add part conditions for each matching simple card
-          # This finds compound cards like "Parent+MatchingCard+Child"
-          matching_simple_cards.each do |card_name|
-            conditions << { part: card_name }
-          end
-        rescue => e
-          Rails.logger.warn "Hybrid name search failed: #{e.message}"
-        end
+  # 2. Find simple cards matching the word, then add part conditions
+  begin
+    matching_simple_cards = Card::Auth.as(current_account.name) do
+      Card.search(
+        name: ["match", word],
+        limit: 50,
+        return: :name
+      )
+    end
 
-        conditions
-      end
+    matching_simple_cards.each do |card_name|
+      conditions << { part: card_name }
+    end
+  rescue => e
+    Rails.logger.warn "Hybrid name search failed for word: #{e.message}"
+  end
+
+  conditions
+end
+
+# Build conditions for multi-word search using AND logic
+# "Tharaneth roots" finds cards matching BOTH "Tharaneth" AND "roots"
+def build_multi_word_conditions(words)
+  # Build conditions for each word
+  word_conditions = words.map do |word|
+    single = build_single_word_conditions(word)
+    # Wrap in "any" if multiple conditions, otherwise use directly
+    single.size == 1 ? single.first : { any: single }
+  end
+
+  # Return AND condition requiring ALL words to match
+  [{ and: word_conditions }]
+end
 
 
 def execute_search(query, limit, offset, include_virtual: false)
@@ -453,6 +495,14 @@ def execute_search(query, limit, offset, include_virtual: false)
   # Filter out trashed/deleted cards (all roles)
   before_trash = cards.size
   cards = cards.reject { |c| c.trash }
+
+  # Filter by name words if multi-word search
+  if @name_filter_words && @name_filter_words.any?
+    cards = cards.select do |c|
+      card_name_lower = c.name.to_s.downcase
+      @name_filter_words.all? { |word| card_name_lower.include?(word.downcase) }
+    end
+  end
 
   # Filter out GM/AI content for user role
   if current_role == "user"
