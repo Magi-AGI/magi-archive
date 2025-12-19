@@ -58,6 +58,9 @@ Decko.application.routes.draw do
       # Query endpoint (Phase 3)
       post 'run_query', to: 'query#run'
 
+      # Auto-link endpoint (cross-reference discovery)
+      post 'auto_link', to: 'auto_link#create'
+
       # Validation endpoints
       namespace :validation do
         post 'tags', to: 'validation#validate_tags'
