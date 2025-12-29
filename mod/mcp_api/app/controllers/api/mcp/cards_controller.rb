@@ -325,50 +325,6 @@ module Api
       end
 
 
-      # GET /api/mcp/cards/:name/referers
-      def referers
-        card = fetch_card(params[:name])
-        referers = Card::Auth.as(current_account.name) { card.referers.to_a }
-        render json: { card_name: card.name, referers: referers.map { |c| format_card_summary(c) }, referers_count: referers.size }
-      rescue ActiveRecord::RecordNotFound
-        render_not_found('Card', params[:name])
-      end
-
-      # GET /api/mcp/cards/:name/linked_by
-      def linked_by
-        card = fetch_card(params[:name])
-        linked_by = Card::Auth.as(current_account.name) { card.referencers.to_a }
-        render json: { card_name: card.name, linked_by: linked_by.map { |c| format_card_summary(c) }, linked_by_count: linked_by.size }
-      rescue ActiveRecord::RecordNotFound
-        render_not_found('Card', params[:name])
-      end
-
-      # GET /api/mcp/cards/:name/nested_in
-      def nested_in
-        card = fetch_card(params[:name])
-        nested_in = Card::Auth.as(current_account.name) { card.nesters.to_a }
-        render json: { card_name: card.name, nested_in: nested_in.map { |c| format_card_summary(c) }, nested_in_count: nested_in.size }
-      rescue ActiveRecord::RecordNotFound
-        render_not_found('Card', params[:name])
-      end
-
-      # GET /api/mcp/cards/:name/nests
-      def nests
-        card = fetch_card(params[:name])
-        nests = Card::Auth.as(current_account.name) { card.nestees.to_a }
-        render json: { card_name: card.name, nests: nests.map { |c| format_card_summary(c) }, nests_count: nests.size }
-      rescue ActiveRecord::RecordNotFound
-        render_not_found('Card', params[:name])
-      end
-
-      # GET /api/mcp/cards/:name/links
-      def links
-        card = fetch_card(params[:name])
-        links = Card::Auth.as(current_account.name) { card.referencees.to_a }
-        render json: { card_name: card.name, links: links.map { |c| format_card_summary(c) }, links_count: links.size }
-      rescue ActiveRecord::RecordNotFound
-        render_not_found('Card', params[:name])
-      end
       private
 
       def set_card
