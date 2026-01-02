@@ -365,7 +365,9 @@ module Api
         # Additional MCP-specific filtering for legacy content using naming conventions
         # Content with +GM or +AI in name should ideally have proper +*read rules,
         # but we filter here as a fallback for backwards compatibility
-        if card.name.include?("+GM") || card.name.include?("+AI")
+        # Note: card.name returns Card::Name, must convert to_s for include? to work correctly
+        card_name_str = card.name.to_s
+        if card_name_str.include?("+GM") || card_name_str.include?("+AI")
           return false unless ::Mcp::Roles.can_view_gm_content?(current_role)
         end
 
@@ -542,9 +544,10 @@ def execute_search(query, limit, offset, include_virtual: false)
   end
 
   # Filter out GM/AI content for roles without GM content access
+  # Note: c.name returns Card::Name, must convert to_s for include? to work correctly
   unless ::Mcp::Roles.can_view_gm_content?(current_role)
     before_gm = cards.size
-    cards = cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
+    cards = cards.reject { |c| c.name.to_s.include?("+GM") || c.name.to_s.include?("+AI") }
   end
 
   # Filter out virtual cards unless explicitly requested
@@ -567,9 +570,10 @@ end
     cards = cards.reject { |c| c.trash }
 
     # Filter out GM/AI content for roles without GM content access
+    # Note: c.name returns Card::Name, must convert to_s for include? to work correctly
     unless ::Mcp::Roles.can_view_gm_content?(current_role)
       before_gm = cards.size
-      cards = cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
+      cards = cards.reject { |c| c.name.to_s.include?("+GM") || c.name.to_s.include?("+AI") }
     end
     
     unless include_virtual
