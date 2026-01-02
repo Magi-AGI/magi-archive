@@ -5,10 +5,8 @@ Rails.application.routes.append do
   namespace :api do
     namespace :mcp do
       # Auth endpoints
-      scope :auth do
-        post "/", to: "auth#create"
-        post "debug", to: "auth#debug"  # Diagnostic endpoint for role detection
-      end
+      post "auth", to: "auth#create"
+      post "debug/auth", to: "auth#debug"  # Diagnostic endpoint for role detection
 
       # JWKS endpoint (public key distribution)
       get ".well-known/jwks.json", to: "jwks#show"
