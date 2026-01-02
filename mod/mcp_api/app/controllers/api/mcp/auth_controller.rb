@@ -33,6 +33,37 @@ module Api
         end
       end
 
+      # POST /api/mcp/auth/debug
+      # Diagnostic endpoint for role detection - shows all role detection methods
+      def debug
+        return render_error("validation_error", "Must provide username + password") unless username_provided?
+
+        username = params[:username]
+        password = params[:password]
+
+        # Authenticate user
+        begin
+          result = ::Mcp::UserAuthenticator.authenticate(username, password)
+        rescue ::Mcp::UserAuthenticator::AuthenticationError => e
+          return render_error("authentication_failed", e.message, {}, status: :unauthorized)
+        rescue StandardError => e
+          return render_error("internal_error", e.message, { exception: e.class.name })
+        end
+
+        user_card = result[:user]
+
+        # Collect all debug info about role detection
+        debug_info = ::Mcp::UserAuthenticator.debug_role_detection(user_card)
+
+        render json: {
+          username: user_card.name,
+          user_card_id: user_card.id,
+          user_card_type: user_card.type_name,
+          detected_role: result[:role],
+          debug: debug_info
+        }
+      end
+
       private
 
       # ==================== Username/Password Authentication ====================

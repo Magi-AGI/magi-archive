@@ -159,19 +159,135 @@ module Mcp
     # @return [Array<String>] List of role names
     def self.get_user_roles(user_card)
       roles = []
+      roles_card = nil
 
-      # Try to get roles from the user's +*roles card
-      roles_card = Card.find_by_name("#{user_card.name}+*roles")
-      if roles_card && roles_card.respond_to?(:item_names)
-        roles = roles_card.item_names
-        Rails.logger.info("DEBUG found roles via +*roles card: #{roles.inspect}")
+      # Approach 1: Try user_card.fetch(:roles) - Decko's trait accessor
+      begin
+        roles_card = user_card.fetch(:roles)
+        Rails.logger.info("DEBUG get_user_roles: fetch(:roles) success: #{roles_card.inspect}")
+      rescue => e
+        Rails.logger.info("DEBUG get_user_roles: fetch(:roles) failed: #{e.message}")
+      end
+
+      # Approach 2: Try Card[user_card.name, :roles] - compound key lookup
+      unless roles_card
+        begin
+          roles_card = Card[user_card.name, :roles]
+          Rails.logger.info("DEBUG get_user_roles: Card[name, :roles] success: #{roles_card.inspect}")
+        rescue => e
+          Rails.logger.info("DEBUG get_user_roles: Card[name, :roles] failed: #{e.message}")
+        end
+      end
+
+      # Approach 3: Try Card.find_by_name - traditional lookup
+      unless roles_card
+        role_card_name = "#{user_card.name}+*roles"
+        Rails.logger.info("DEBUG get_user_roles: trying Card.find_by_name('#{role_card_name}')")
+        roles_card = Card.find_by_name(role_card_name)
+        Rails.logger.info("DEBUG get_user_roles: find_by_name result: #{roles_card.inspect}")
+      end
+
+      # Approach 4: Try Card.fetch which handles virtual cards
+      unless roles_card
+        begin
+          roles_card = Card.fetch("#{user_card.name}+*roles")
+          Rails.logger.info("DEBUG get_user_roles: Card.fetch result: #{roles_card.inspect}")
+        rescue => e
+          Rails.logger.info("DEBUG get_user_roles: Card.fetch failed: #{e.message}")
+        end
+      end
+
+      # Extract role names if we found a roles card
+      if roles_card
+        if roles_card.respond_to?(:item_names)
+          roles = roles_card.item_names
+          Rails.logger.info("DEBUG get_user_roles: found roles via item_names: #{roles.inspect}")
+        elsif roles_card.respond_to?(:content)
+          # Try parsing content as newline-separated names
+          roles = roles_card.content.to_s.split("\n").map(&:strip).reject(&:empty?)
+          Rails.logger.info("DEBUG get_user_roles: parsed roles from content: #{roles.inspect}")
+        end
       end
 
       # Filter out system roles that aren't useful for MCP
       roles.reject { |r| %w[Anyone Anyone\ Signed\ In].include?(r) }
     rescue StandardError => e
       Rails.logger.warn("Failed to get user roles: #{e.message}")
+      Rails.logger.warn(e.backtrace.first(5).join("\n"))
       []
+    end
+
+    # Debug helper to trace all role detection methods
+    #
+    # @param user_card [Card] The user card
+    # @return [Hash] Debug information about role detection
+    def self.debug_role_detection(user_card)
+      info = {
+        user_name: user_card.name,
+        user_id: user_card.id,
+        approaches: {}
+      }
+
+      # Approach 1: fetch(:roles)
+      begin
+        roles_card = user_card.fetch(:roles)
+        info[:approaches][:fetch_roles] = {
+          success: !roles_card.nil?,
+          card: roles_card&.name,
+          card_id: roles_card&.id,
+          item_names: roles_card&.respond_to?(:item_names) ? roles_card.item_names : nil,
+          content: roles_card&.content&.truncate(200)
+        }
+      rescue => e
+        info[:approaches][:fetch_roles] = { success: false, error: e.message }
+      end
+
+      # Approach 2: Card[name, :roles]
+      begin
+        roles_card = Card[user_card.name, :roles]
+        info[:approaches][:card_bracket] = {
+          success: !roles_card.nil?,
+          card: roles_card&.name,
+          card_id: roles_card&.id,
+          item_names: roles_card&.respond_to?(:item_names) ? roles_card.item_names : nil
+        }
+      rescue => e
+        info[:approaches][:card_bracket] = { success: false, error: e.message }
+      end
+
+      # Approach 3: find_by_name
+      role_card_name = "#{user_card.name}+*roles"
+      roles_card = Card.find_by_name(role_card_name)
+      info[:approaches][:find_by_name] = {
+        success: !roles_card.nil?,
+        searched_for: role_card_name,
+        card: roles_card&.name,
+        card_id: roles_card&.id,
+        item_names: roles_card&.respond_to?(:item_names) ? roles_card.item_names : nil
+      }
+
+      # Approach 4: Card.fetch
+      begin
+        roles_card = Card.fetch(role_card_name)
+        info[:approaches][:card_fetch] = {
+          success: !roles_card.nil?,
+          card: roles_card&.name,
+          card_id: roles_card&.id,
+          item_names: roles_card&.respond_to?(:item_names) ? roles_card.item_names : nil
+        }
+      rescue => e
+        info[:approaches][:card_fetch] = { success: false, error: e.message }
+      end
+
+      # Check admin/gm status with helper methods
+      info[:is_admin] = admin?(user_card)
+      info[:is_gm] = gm?(user_card)
+
+      # Get final detected roles
+      info[:detected_roles] = get_user_roles(user_card)
+      info[:highest_role] = ::Mcp::Roles.highest_role(info[:detected_roles])
+
+      info
     end
 
     # Check if user has admin permissions
