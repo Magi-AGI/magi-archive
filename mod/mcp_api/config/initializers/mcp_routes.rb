@@ -43,9 +43,10 @@ Rails.application.routes.append do
       put "cards/*name/rename", to: "cards#rename", format: false, constraints: { name: /.*/ }
 
       # Render endpoints (Phase 2)
-      namespace :render do
-        post "/", to: "render#html_to_markdown", as: :html_to_markdown
-        post "markdown", to: "render#markdown_to_html"
+      # Use scope instead of namespace - controller is at Api::Mcp::RenderController
+      scope :render do
+        post "/", to: "render#html_to_markdown", as: :render_html_to_markdown
+        post "markdown", to: "render#markdown_to_html", as: :render_markdown_to_html
       end
     end
   end
