@@ -4,9 +4,10 @@
 Rails.application.routes.append do
   namespace :api do
     namespace :mcp do
-      # Auth endpoints
+      # Auth endpoint
       post "auth", to: "auth#create"
-      post "debug/auth", to: "auth#debug"  # Diagnostic endpoint for role detection
+      # Note: debug endpoint at POST auth/debug doesn't load correctly in Decko's routing
+      # Use server logs for role detection debugging instead
 
       # JWKS endpoint (public key distribution)
       get ".well-known/jwks.json", to: "jwks#show"
