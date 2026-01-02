@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "../../../../lib/mcp/roles"
+
 module Api
   module Mcp
     class CardsController < BaseController
@@ -357,11 +359,15 @@ module Api
         can_read = Card::Auth.as(current_account.name) do
           card.ok?(:read)
         end
-        
+
         return false unless can_read
 
-        # Additional MCP-specific filtering: User role cannot see GM or AI content
-        return false if current_role == "user" && (card.name.include?("+GM") || card.name.include?("+AI"))
+        # Additional MCP-specific filtering for legacy content using naming conventions
+        # Content with +GM or +AI in name should ideally have proper +*read rules,
+        # but we filter here as a fallback for backwards compatibility
+        if card.name.include?("+GM") || card.name.include?("+AI")
+          return false unless ::Mcp::Roles.can_view_gm_content?(current_role)
+        end
 
         true
       end
@@ -535,8 +541,8 @@ def execute_search(query, limit, offset, include_virtual: false)
     end
   end
 
-  # Filter out GM/AI content for user role
-  if current_role == "user"
+  # Filter out GM/AI content for roles without GM content access
+  unless ::Mcp::Roles.can_view_gm_content?(current_role)
     before_gm = cards.size
     cards = cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
   end
@@ -556,11 +562,12 @@ end
       def count_search_results(query, include_virtual: true)
   Card::Auth.as(current_account.name) do
     cards = Card.search(query.merge(limit: 10000))
-    
+
     before_trash = cards.size
     cards = cards.reject { |c| c.trash }
-    
-    if current_role == "user"
+
+    # Filter out GM/AI content for roles without GM content access
+    unless ::Mcp::Roles.can_view_gm_content?(current_role)
       before_gm = cards.size
       cards = cards.reject { |c| c.name.include?("+GM") || c.name.include?("+AI") }
     end

@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "bcrypt"
+require_relative "roles"
+
 module Mcp
   # Authenticates Decko users and determines their MCP role
   # Integrates with Decko's Card-based user system
@@ -140,14 +142,36 @@ module Mcp
 
     def self.determine_role(user_card)
       Rails.logger.info("DEBUG determine_role called for user: #{user_card.name}")
-      # Check if user is admin
-      return "admin" if admin?(user_card)
 
-      # Check if user is GM
-      return "gm" if gm?(user_card)
+      # Get all roles for this user from Decko
+      user_roles = get_user_roles(user_card)
+      Rails.logger.info("DEBUG user roles from Decko: #{user_roles.inspect}")
 
-      # Default to user role
-      "user"
+      # Return the highest-privilege role using centralized Roles module
+      role = ::Mcp::Roles.highest_role(user_roles)
+      Rails.logger.info("DEBUG determined role: #{role}")
+      role
+    end
+
+    # Get all Decko roles assigned to a user
+    #
+    # @param user_card [Card] The user card
+    # @return [Array<String>] List of role names
+    def self.get_user_roles(user_card)
+      roles = []
+
+      # Try to get roles from the user's +*roles card
+      roles_card = Card.find_by_name("#{user_card.name}+*roles")
+      if roles_card && roles_card.respond_to?(:item_names)
+        roles = roles_card.item_names
+        Rails.logger.info("DEBUG found roles via +*roles card: #{roles.inspect}")
+      end
+
+      # Filter out system roles that aren't useful for MCP
+      roles.reject { |r| %w[Anyone Anyone\ Signed\ In].include?(r) }
+    rescue StandardError => e
+      Rails.logger.warn("Failed to get user roles: #{e.message}")
+      []
     end
 
     # Check if user has admin permissions

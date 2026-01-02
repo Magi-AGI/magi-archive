@@ -3,6 +3,7 @@
 require "securerandom"
 require "digest"
 require "json"
+require_relative "roles"
 
 module Mcp
   # Card-based API key management for MCP API
@@ -19,7 +20,6 @@ module Mcp
   class ApiKeyManager
     CONTAINER_NAME = "MCP API Keys"
     TYPE_NAME = "MCP API Key"
-    VALID_ROLES = %w[user gm admin].freeze
 
     class << self
       # Generate a new API key
@@ -56,10 +56,10 @@ module Mcp
           key_prefix: key_prefix
         }
 
-        # Validate roles
-        invalid_roles = Array(roles) - VALID_ROLES
+        # Validate roles against Decko's role system
+        invalid_roles = Array(roles).reject { |r| ::Mcp::Roles.valid?(r) }
         if invalid_roles.any?
-          raise ArgumentError, "Invalid roles: #{invalid_roles.join(', ')}. Valid: #{VALID_ROLES.join(', ')}"
+          raise ArgumentError, "Invalid roles: #{invalid_roles.join(', ')}. Valid roles: #{::Mcp::Roles.all.join(', ')}"
         end
 
         # Create the API key card with subcards

@@ -60,14 +60,23 @@ module Api
         end
 
         # Fallback to service accounts if actual user not found
-        account_name = case payload["role"]
-                       when "user"
-                         ENV.fetch("MCP_USER_NAME", "mcp-user")
-                       when "gm"
-                         ENV.fetch("MCP_GM_NAME", "mcp-gm")
-                       when "admin"
-                         ENV.fetch("MCP_ADMIN_NAME", "mcp-admin")
-                       end
+        # First check for role-specific env var (e.g., MCP_MAGI_TEAM_NAME)
+        role = payload["role"]
+        role_env_key = "MCP_#{role.upcase.tr(' ', '_')}_NAME"
+        account_name = ENV[role_env_key]
+
+        # Fall back to legacy role mappings for backwards compatibility
+        account_name ||= case role&.downcase
+                         when "user"
+                           ENV.fetch("MCP_USER_NAME", "mcp-user")
+                         when "gm", "game master"
+                           ENV.fetch("MCP_GM_NAME", "mcp-gm")
+                         when "admin", "administrator"
+                           ENV.fetch("MCP_ADMIN_NAME", "mcp-admin")
+                         else
+                           # For any other role, try a generic service account
+                           ENV.fetch("MCP_DEFAULT_NAME", "mcp-user")
+                         end
 
         Card[account_name] if account_name
       end
