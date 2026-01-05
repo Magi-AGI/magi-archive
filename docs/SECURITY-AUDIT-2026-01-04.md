@@ -33,7 +33,7 @@ A comprehensive security audit was performed on the Magi Archive infrastructure.
 |---|---------|----------|--------|-------|
 | 7 | SendGrid API key potentially exposed | LOW | ⏸️ Deferred | Key was displayed in terminal; rotation recommended |
 | 8 | MCP uses password auth | LOW | ⏸️ Deferred | API key auth available but optional improvement |
-| 9 | Google Workspace email setup | N/A | 🔄 In Progress | Instructions provided, awaiting user action |
+| 9 | Google Workspace email setup | N/A | ⏳ Waiting | Application submitted, awaiting Google approval |
 
 ---
 
@@ -211,6 +211,7 @@ chmod 600 /home/ubuntu/magi-archive-mcp/.env.production
 ### In Repository
 - `docs/SERVER-ACCESS.md` - Server access documentation
 - `docs/SECURITY-AUDIT-2026-01-04.md` - This file
+- `docs/GOOGLE-WORKSPACE-SETUP.md` - Email setup instructions (for after approval)
 
 ---
 
@@ -232,3 +233,41 @@ openssl x509 -in /etc/ssl/cloudflare/magi-agi.org.pem -text -noout
 # View banned IPs
 sudo fail2ban-client status sshd | grep "Banned IP"
 ```
+
+---
+
+## Session Summary
+
+### Actions Taken (2026-01-04)
+
+1. **Investigated SSH attacks** - Found brute force attempts from multiple foreign IPs
+2. **Installed fail2ban** - Configured SSH jail with 3 retries, 1 hour ban; immediately banned 102.88.137.213
+3. **Installed SSL certificate** - Cloudflare Origin Certificate valid until 2040
+4. **Updated nginx configs** - Added HTTPS (port 443) with SSL for both wiki and MCP subdomains
+5. **Enabled UFW firewall** - Restricted to ports 22, 80, 443 only
+6. **Added rate limiting** - nginx rate limits for auth (5/s), API (30/s), general (10/s)
+7. **Fixed file permissions** - Changed .env and database.yml to 600
+8. **Analyzed API usage** - Confirmed rate limits have 6x headroom vs actual usage
+9. **Created documentation** - SERVER-ACCESS.md with SSH setup, lockout recovery, team onboarding
+10. **Initiated Google Workspace signup** - Application submitted, awaiting approval
+
+### Verification Performed
+
+- ✅ MCP API tools tested after each change - all working
+- ✅ SSH connection verified after firewall changes
+- ✅ SSL certificate verified with openssl
+- ✅ Rate limiting confirmed with log analysis
+
+### Time Investment
+
+- Audit duration: ~2 hours
+- Items completed: 6 of 9
+- Items deferred: 2 (low priority)
+- Items waiting: 1 (external dependency)
+
+### Next Steps
+
+1. **When Google approves:** Follow `docs/GOOGLE-WORKSPACE-SETUP.md` to configure MX records
+2. **When convenient:** Rotate SendGrid API key
+3. **Monthly:** Run `sudo apt update && sudo apt upgrade`
+4. **Periodically:** Review fail2ban logs for attack patterns
