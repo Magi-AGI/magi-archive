@@ -36,7 +36,7 @@ module Api
       # GET /api/mcp/cards/:name
       # Get single card with full content
       def show
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        return render_forbidden_content unless can_view_card?(@card)
 
         render json: card_full_json(@card)
       end
@@ -72,7 +72,7 @@ module Api
       # PATCH /api/mcp/cards/:name
       # Update existing card
       def update
-        return render_forbidden_gm_content unless can_modify_card?(@card)
+        return render_forbidden_content unless can_modify_card?(@card)
 
         Card::Auth.as(current_account.name) do
           if params[:patch]
@@ -136,7 +136,7 @@ module Api
       # GET /api/mcp/cards/:name/children
       # List children cards
       def children
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        return render_forbidden_content unless can_view_card?(@card)
 
         limit = [(params[:limit] || 50).to_i, 100].min
         offset = (params[:offset] || 0).to_i
@@ -164,7 +164,7 @@ module Api
       # GET /api/mcp/cards/:name/referers
       # List cards that reference/link to this card
       def referers
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        return render_forbidden_content unless can_view_card?(@card)
 
         referer_cards = fetch_referers(@card).select { |c| can_view_card?(c) }
 
@@ -178,7 +178,7 @@ module Api
       # GET /api/mcp/cards/:name/nested_in
       # List cards that nest/include this card
       def nested_in
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        return render_forbidden_content unless can_view_card?(@card)
 
         nesting_cards = fetch_nested_in(@card).select { |c| can_view_card?(c) }
 
@@ -192,7 +192,7 @@ module Api
       # GET /api/mcp/cards/:name/nests
       # List cards that this card nests/includes
       def nests
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        return render_forbidden_content unless can_view_card?(@card)
 
         nested_cards = fetch_nests(@card).select { |c| can_view_card?(c) }
 
@@ -206,7 +206,7 @@ module Api
       # GET /api/mcp/cards/:name/links
       # List cards that this card links to
       def links
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        return render_forbidden_content unless can_view_card?(@card)
 
         linked_cards = fetch_links(@card).select { |c| can_view_card?(c) }
 
@@ -220,7 +220,7 @@ module Api
       # GET /api/mcp/cards/:name/linked_by
       # List cards that link to this card
       def linked_by
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        return render_forbidden_content unless can_view_card?(@card)
 
         linking_cards = fetch_linked_by(@card).select { |c| can_view_card?(c) }
 
@@ -258,7 +258,7 @@ module Api
       # GET /api/mcp/cards/:name/history
       # Get revision history for a card
       def history
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        return render_forbidden_content unless can_view_card?(@card)
 
         limit = [(params[:limit] || 20).to_i, 100].min
 
@@ -284,7 +284,7 @@ module Api
       # GET /api/mcp/cards/:name/history/:act_id
       # Get content from a specific revision
       def revision
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        return render_forbidden_content unless can_view_card?(@card)
 
         act_id = params[:act_id].to_i
 
@@ -335,12 +335,28 @@ module Api
         look_in_trash = action_name == "restore" && 
                         (params[:from_trash] == true || params[:from_trash] == "true")
         
+        # First check if card exists at all (as bot to bypass permissions)
+        card_exists = Card::Auth.as_bot do
+          Card.exists?(name) || (look_in_trash && Card.where(name: name, trash: true).exists?)
+        end
+
+        unless card_exists
+          return render_error("not_found", "Card '#{name}' not found", {}, status: :not_found)
+        end
+
+        # Now fetch with user's permissions
         @card = Card::Auth.as(current_account.name) do
           Card.fetch(name, look_in_trash: look_in_trash)
         end
 
+        # If card exists but fetch returned nil, it's a permission issue
         unless @card
-          render_error("not_found", "Card '#{name}' not found", {}, status: :not_found)
+          render_error(
+            "permission_denied",
+            "You do not have permission to access '#{name}'",
+            { hint: "This card exists but requires elevated permissions to view." },
+            status: :forbidden
+          )
         end
       end
 
@@ -354,24 +370,20 @@ module Api
         # Filter out trashed/deleted cards
         return false if card.trash
 
-        # Check Decko's built-in permission system
-        # This respects +*read rules set on cards
-        can_read = Card::Auth.as(current_account.name) do
+        # Use Decko's built-in permission system exclusively.
+        # This respects +*read rules set on cards and their inheritance.
+        #
+        # Permission inheritance works via the permission_propagation mod:
+        # - Child cards inherit parent +*read rules automatically
+        # - New cards under restricted parents get correct permissions on create
+        # - Permission changes propagate to all descendant cards
+        #
+        # DEPRECATED: Previously we also filtered by card name patterns (+GM, +AI).
+        # Cards requiring GM access should have proper +*read rules set instead.
+        # The name-based filtering has been removed for consistency.
+        Card::Auth.as(current_account.name) do
           card.ok?(:read)
         end
-
-        return false unless can_read
-
-        # Additional MCP-specific filtering for legacy content using naming conventions
-        # Content with +GM or +AI in name should ideally have proper +*read rules,
-        # but we filter here as a fallback for backwards compatibility
-        # Note: card.name returns Card::Name, must convert to_s for include? to work correctly
-        card_name_str = card.name.to_s
-        if card_name_str.include?("+GM") || card_name_str.include?("+AI")
-          return false unless ::Mcp::Roles.can_view_gm_content?(current_role)
-        end
-
-        true
       end
 
       def can_modify_card?(card)
@@ -379,10 +391,11 @@ module Api
         can_view_card?(card)
       end
 
-      def render_forbidden_gm_content
+      def render_forbidden_content
+        # Used when Decko's native permissions deny access
         render_forbidden(
-          "Role '#{current_role}' cannot access GM content",
-          { card: @card.name, required_role: "gm" }
+          "You do not have permission to access this content",
+          { card: @card.name, hint: "Check card permissions (+*read rules) or contact an admin." }
         )
       end
 
@@ -522,7 +535,6 @@ def execute_search(query, limit, offset, include_virtual: false)
 
   # Apply date range post-filter if needed
   if @filter_date_range
-    before_date = cards.size
     cards = cards.select do |c|
       in_range = true
       in_range = false if @filter_date_range[:since] && c.updated_at < @filter_date_range[:since]
@@ -532,7 +544,6 @@ def execute_search(query, limit, offset, include_virtual: false)
   end
 
   # Filter out trashed/deleted cards (all roles)
-  before_trash = cards.size
   cards = cards.reject { |c| c.trash }
 
   # Filter by name words if multi-word search
@@ -543,46 +554,36 @@ def execute_search(query, limit, offset, include_virtual: false)
     end
   end
 
-  # Filter out GM/AI content for roles without GM content access
-  # Note: c.name returns Card::Name, must convert to_s for include? to work correctly
-  unless ::Mcp::Roles.can_view_gm_content?(current_role)
-    before_gm = cards.size
-    cards = cards.reject { |c| c.name.to_s.include?("+GM") || c.name.to_s.include?("+AI") }
-  end
+  # Use Decko's native permission system to filter cards
+  # This respects +*read rules and their inheritance to child cards.
+  # DEPRECATED: Previously used name-based filtering (+GM, +AI patterns).
+  # Cards requiring restricted access should have proper +*read rules set.
+  cards = cards.select { |c| can_view_card?(c) }
 
   # Filter out virtual cards unless explicitly requested
   unless include_virtual
-    before_virtual = cards.size
     cards = cards.reject { |c| detect_virtual_card(c) }
   end
 
   # NOW apply offset and limit to filtered results
-  result = cards.drop(offset).take(limit)
-
-  result
+  cards.drop(offset).take(limit)
 end
 
       def count_search_results(query, include_virtual: true)
   Card::Auth.as(current_account.name) do
     cards = Card.search(query.merge(limit: 10000))
 
-    before_trash = cards.size
     cards = cards.reject { |c| c.trash }
 
-    # Filter out GM/AI content for roles without GM content access
-    # Note: c.name returns Card::Name, must convert to_s for include? to work correctly
-    unless ::Mcp::Roles.can_view_gm_content?(current_role)
-      before_gm = cards.size
-      cards = cards.reject { |c| c.name.to_s.include?("+GM") || c.name.to_s.include?("+AI") }
-    end
+    # Use Decko's native permission system to filter cards
+    # This respects +*read rules and their inheritance to child cards.
+    cards = cards.select { |c| can_view_card?(c) }
     
     unless include_virtual
-      before_virtual = cards.size
       cards = cards.reject { |c| detect_virtual_card(c) }
     end
     
     if @filter_date_range
-      before_date = cards.size
       cards = cards.select do |c|
         in_range = true
         in_range = in_range && (c.updated_at >= @filter_date_range[:since]) if @filter_date_range[:since]

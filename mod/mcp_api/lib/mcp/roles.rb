@@ -3,12 +3,32 @@
 module Mcp
   # Centralized role management that integrates with Decko's role system.
   #
-  # Decko stores roles as cards of type "Role" and assigns them to users
-  # via "Username+*roles" cards. This module queries Decko directly rather
-  # than maintaining a hardcoded list of roles.
+  # == Permission Architecture
   #
-  # Special MCP roles (admin, gm, user) are mapped from Decko roles for
-  # backwards compatibility, but any valid Decko role can be used.
+  # Permissions are handled by Decko's native +*read rules, NOT by role checks:
+  #
+  # 1. Decko permissions (+*read rules) control who can see what content
+  # 2. Child cards automatically inherit parent permissions via permission_propagation mod
+  # 3. MCP roles (admin, gm, user) are used for:
+  #    - Token authentication and role validation
+  #    - Admin-only operations (delete, rename, trash)
+  #    - NOT for content visibility filtering (use +*read rules instead)
+  #
+  # == Setting Up GM-Only Content
+  #
+  # To restrict content to GM/admin users:
+  # 1. Create the parent card (e.g., "Games+MyGame+GM Content")
+  # 2. Create +*self+*read rule: "Games+MyGame+GM Content+*self+*read"
+  # 3. Set content to: "[[Game Master]]
+[[Administrator]]"
+  # 4. All child cards will automatically inherit this restriction
+  #
+  # == Migration from Name-Based Filtering
+  #
+  # Previously, content with +GM or +AI in the name was filtered by role.
+  # This is now DEPRECATED. Cards should have proper +*read rules set instead.
+  # The can_view_gm_content? method is retained for auth level calculations
+  # but is no longer used for content filtering.
   class Roles
     # Legacy MCP role names for backwards compatibility
     ADMIN = "admin"
@@ -24,8 +44,10 @@ module Mcp
       "gm" => GM
     }.freeze
 
-    # Roles that can see GM/restricted content (beyond what Decko permissions allow)
-    # This is a fallback for content that uses naming conventions rather than proper +*read rules
+    # Roles that have elevated privileges in the MCP system.
+    # DEPRECATED: This was used for name-based content filtering (+GM, +AI patterns).
+    # Content visibility should now be controlled by Decko's +*read rules instead.
+    # Retained for backwards compatibility in role level calculations.
     GM_CONTENT_ROLES = [ADMIN, GM, "game master", "administrator", "magi team"].freeze
 
     class << self
@@ -87,11 +109,15 @@ module Mcp
         custom_role ? normalize(custom_role) : USER
       end
 
-      # Check if a role can view GM-restricted content
-      # This is for content using naming conventions (+GM, +AI) rather than proper +*read rules
+      # DEPRECATED: Check if a role has elevated privileges.
+      #
+      # Previously used to filter content based on +GM/+AI naming conventions.
+      # Content visibility should now be controlled by Decko's +*read rules instead.
+      # This method is retained for backwards compatibility in role level calculations.
       #
       # @param role [String] Role name
-      # @return [Boolean] True if role can see GM content
+      # @return [Boolean] True if role has elevated privileges
+      # @deprecated Use Decko's +*read rules for content visibility instead
       def can_view_gm_content?(role)
         return true if role.nil? # Nil role defers to Decko permissions
         GM_CONTENT_ROLES.include?(role.downcase)

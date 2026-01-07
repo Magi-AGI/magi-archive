@@ -31,12 +31,19 @@ Rails.application.routes.append do
           get :nested_in
           get :nests
           get :links
+          # History endpoints (Phase 4)
+          get :history
+          get "history/:act_id", action: :revision, as: :revision
+          post :restore
         end
 
         collection do
           post :batch
         end
       end
+
+      # Trash listing (admin only, Phase 4)
+      resources :trash, only: [:index]
 
       # Rename endpoint - defined separately to handle complex card names
       # Using glob constraint to capture full path including encoded characters

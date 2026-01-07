@@ -1,7 +1,11 @@
 # frozen_string_literal: true
 
-# Add these methods to Api::Mcp::CardsController
-# This is a temporary file showing the additions needed for card history
+# HISTORICAL REFERENCE FILE
+# These methods have been merged into cards_controller.rb
+# This file is kept for reference/documentation only.
+# 
+# Note: Method names updated to match current implementation
+# (render_forbidden_content instead of render_forbidden_gm_content)
 
 # Add to before_action line at the top:
 #   before_action :set_card, only: [..., :history, :revision, :restore]
@@ -11,7 +15,7 @@
       # GET /api/mcp/cards/:name/history
       # Get revision history for a card
       def history
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        return render_forbidden_content unless can_view_card?(@card)
 
         limit = [(params[:limit] || 20).to_i, 100].min
 
@@ -37,7 +41,7 @@
       # GET /api/mcp/cards/:name/history/:act_id
       # Get content from a specific revision
       def revision
-        return render_forbidden_gm_content unless can_view_card?(@card)
+        return render_forbidden_content unless can_view_card?(@card)
 
         act_id = params[:act_id].to_i
 
