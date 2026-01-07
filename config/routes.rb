@@ -44,12 +44,19 @@ Decko.application.routes.draw do
           get :links
           get :linked_by
           put :rename
+          # History endpoints (Phase 4)
+          get :history
+          get 'history/:act_id', action: :revision, as: :revision
+          post :restore
         end
 
         collection do
           post :batch
         end
       end
+
+      # Trash listing (admin only, Phase 4)
+      resources :trash, only: [:index]
 
       # Render endpoints (Phase 2)
       post 'render', to: 'render#html_to_markdown'
