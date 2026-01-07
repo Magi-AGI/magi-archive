@@ -19,8 +19,7 @@ module Mcp
   # To restrict content to GM/admin users:
   # 1. Create the parent card (e.g., "Games+MyGame+GM Content")
   # 2. Create +*self+*read rule: "Games+MyGame+GM Content+*self+*read"
-  # 3. Set content to: "[[Game Master]]
-[[Administrator]]"
+  # 3. Set content to: "[[Game Master]]\n[[Administrator]]"
   # 4. All child cards will automatically inherit this restriction
   #
   # == Migration from Name-Based Filtering
