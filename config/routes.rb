@@ -69,12 +69,12 @@ Decko.application.routes.draw do
       post 'auto_link', to: 'auto_link#create'
 
       # Validation endpoints
-      namespace :validation do
-        post 'tags', to: 'validation#validate_tags'
-        post 'structure', to: 'validation#validate_structure'
-        get 'requirements/:type', to: 'validation#requirements'
-        post 'recommend_structure', to: 'validation#recommend_structure'
-        post 'suggest_improvements', to: 'validation#suggest_improvements'
+      scope :validation, controller: "validation" do
+        post 'tags', action: :validate_tags
+        post 'structure', action: :validate_structure
+        get 'requirements/:type', action: :requirements
+        post 'recommend_structure', action: :recommend_structure
+        post 'suggest_improvements', action: :suggest_improvements
       end
 
       # Admin endpoints (admin role required)

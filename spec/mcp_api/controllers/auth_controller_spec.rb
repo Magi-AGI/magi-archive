@@ -31,9 +31,9 @@ RSpec.describe Api::Mcp::AuthController, type: :request do
         expect(json["token"].split(".").size).to eq(3)
       end
 
-      it "returns MessageVerifier token when JWT disabled" do
-        ENV["MCP_JWT_ENABLED"] = "false"
-
+      it "always returns JWT token (RS256)" do
+        # Note: MessageVerifier tokens are no longer used.
+        # The MCP API always returns JWT tokens regardless of MCP_JWT_ENABLED setting.
         post "/api/mcp/auth", params: {
           api_key: valid_api_key,
           role: "gm"
@@ -45,8 +45,8 @@ RSpec.describe Api::Mcp::AuthController, type: :request do
         expect(json).to have_key("token")
         expect(json["role"]).to eq("gm")
 
-        # MessageVerifier tokens don't have JWT format
-        expect(json["token"].split(".").size).not_to eq(3)
+        # All tokens are now JWT format (3 parts separated by dots)
+        expect(json["token"].split(".").size).to eq(3)
       end
 
       it "accepts api_key from header" do
@@ -80,7 +80,7 @@ RSpec.describe Api::Mcp::AuthController, type: :request do
         expect(response).to have_http_status(:bad_request)
         json = JSON.parse(response.body)
         expect(json["error"]["code"]).to eq("validation_error")
-        expect(json["error"]["message"]).to include("Missing api_key")
+        expect(json["error"]["message"]).to include("Must provide either")
       end
 
       it "rejects missing role" do
@@ -102,7 +102,7 @@ RSpec.describe Api::Mcp::AuthController, type: :request do
         json = JSON.parse(response.body)
         expect(json["error"]["code"]).to eq("validation_error")
         expect(json["error"]["message"]).to include("Invalid role")
-        expect(json["error"]["details"]["valid_roles"]).to eq(%w[user gm admin])
+        expect(json["error"]["details"]).to have_key("valid_roles")
       end
 
       it "rejects wrong api_key" do

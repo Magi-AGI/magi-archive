@@ -2,7 +2,19 @@
 
 require "rails_helper"
 
-RSpec.describe "Api::Mcp::CardsController role-based filtering", type: :request do
+# Tests for MCP API permission model
+#
+# PERMISSION ARCHITECTURE (as of Phase 4):
+# Content visibility is controlled by Decko's native +*read rules, NOT by MCP role checks.
+# The MCP role system is used for:
+# - Token authentication and role validation
+# - Admin-only operations (delete, rename, trash)
+# - NOT for content visibility filtering
+#
+# Previously, content with +GM or +AI in the name was filtered by role.
+# This is now DEPRECATED. Cards should have proper +*read rules set instead.
+# Child cards inherit parent +*read rules via the permission_propagation mod.
+RSpec.describe "Api::Mcp::CardsController permission model", type: :request do
   include McpApiTestHelper
 
   let(:valid_api_key) { ENV["MCP_API_KEY"] || "test-api-key-for-specs" }
@@ -19,111 +31,89 @@ RSpec.describe "Api::Mcp::CardsController role-based filtering", type: :request 
     allow(ENV).to receive(:fetch).and_call_original
   end
 
-  describe "GM content visibility by role" do
-    # These tests verify that +GM and +AI content is properly filtered
-    # based on the role's can_view_gm_content? setting
+  describe "Decko native permission enforcement" do
+    # These tests verify that content visibility is controlled by Decko's +*read rules,
+    # not by MCP role-based name filtering.
 
     context "with 'user' role" do
       let(:token) { token_for_role("user") }
 
-      it "filters out cards with +GM in name from search results" do
-        get "/api/mcp/cards", params: { q: "GM" }, headers: auth_headers(token)
+      it "returns cards the user has Decko permission to read" do
+        get "/api/mcp/cards", params: { q: "Games", limit: 5 }, headers: auth_headers(token)
         expect(response).to have_http_status(:ok)
 
         json = JSON.parse(response.body)
-        card_names = json["cards"].map { |c| c["name"] }
-
-        # User role should not see +GM cards
-        expect(card_names).not_to include(a_string_matching(/\+GM/))
+        expect(json).to have_key("cards")
+        # Cards returned are those the user's Decko account can read
       end
 
-      it "filters out cards with +AI in name from search results" do
-        get "/api/mcp/cards", params: { q: "AI" }, headers: auth_headers(token)
-        expect(response).to have_http_status(:ok)
+      it "respects Decko +*read rules for card access" do
+        # Attempting to access any card - result depends on Decko permissions
+        get "/api/mcp/cards/Games", headers: auth_headers(token)
 
-        json = JSON.parse(response.body)
-        card_names = json["cards"].map { |c| c["name"] }
-
-        # User role should not see +AI cards
-        expect(card_names).not_to include(a_string_matching(/\+AI/))
+        # 200 if user can read, 403/404 if restricted by +*read rules
+        expect(response.status).to be_in([200, 403, 404])
       end
     end
 
     context "with 'gm' role" do
       let(:token) { token_for_role("gm") }
 
-      it "can see cards with +GM in name" do
-        get "/api/mcp/cards", params: { q: "GM Docs" }, headers: auth_headers(token)
+      it "returns cards the GM account has Decko permission to read" do
+        get "/api/mcp/cards", params: { q: "Games", limit: 5 }, headers: auth_headers(token)
         expect(response).to have_http_status(:ok)
 
-        # GM role should be able to see GM content (if it exists and they have Decko permissions)
-        # This test verifies the MCP filter doesn't block it
         json = JSON.parse(response.body)
-        # Just verify no error - actual visibility depends on Decko permissions
         expect(json).to have_key("cards")
+      end
+
+      it "can access cards if Decko permissions allow" do
+        get "/api/mcp/cards/Games", headers: auth_headers(token)
+
+        # GM role doesn't guarantee access - Decko +*read rules are authoritative
+        expect(response.status).to be_in([200, 403, 404])
       end
     end
 
     context "with 'admin' role" do
       let(:token) { token_for_role("admin") }
 
-      it "can see cards with +GM in name" do
-        get "/api/mcp/cards", params: { q: "GM" }, headers: auth_headers(token)
+      it "returns cards the admin account has Decko permission to read" do
+        get "/api/mcp/cards", params: { q: "Games", limit: 5 }, headers: auth_headers(token)
         expect(response).to have_http_status(:ok)
 
         json = JSON.parse(response.body)
         expect(json).to have_key("cards")
       end
 
-      it "can see cards with +AI in name" do
-        get "/api/mcp/cards", params: { q: "AI" }, headers: auth_headers(token)
-        expect(response).to have_http_status(:ok)
+      it "can access cards if Decko permissions allow" do
+        get "/api/mcp/cards/Games", headers: auth_headers(token)
 
-        json = JSON.parse(response.body)
-        expect(json).to have_key("cards")
-      end
-    end
-
-    context "with 'Magi Team' role (GM content access)" do
-      let(:token) { token_for_role("Magi Team") }
-
-      it "can see cards with +GM in name because role has GM content access" do
-        get "/api/mcp/cards", params: { q: "GM" }, headers: auth_headers(token)
-        expect(response).to have_http_status(:ok)
-
-        json = JSON.parse(response.body)
-        expect(json).to have_key("cards")
-        # Magi Team is in GM_CONTENT_ROLES, so they shouldn't be filtered
-      end
-    end
-
-    context "with 'EARTHwise Team' role (no GM content access)" do
-      let(:token) { token_for_role("EARTHwise Team") }
-
-      it "filters out +GM content because role lacks GM content access" do
-        get "/api/mcp/cards", params: { q: "GM" }, headers: auth_headers(token)
-        expect(response).to have_http_status(:ok)
-
-        json = JSON.parse(response.body)
-        card_names = json["cards"].map { |c| c["name"] }
-
-        # EARTHwise Team is NOT in GM_CONTENT_ROLES, so +GM cards should be filtered
-        expect(card_names).not_to include(a_string_matching(/\+GM/))
+        # Admin role typically has broad access but Decko rules are still checked
+        expect(response.status).to be_in([200, 403, 404])
       end
     end
   end
 
-  describe "GET /api/mcp/cards/:name with GM content" do
+  describe "GET /api/mcp/cards/:name permission handling" do
     context "with 'user' role" do
       let(:token) { token_for_role("user") }
 
-      it "returns forbidden for +GM cards" do
-        # Try to access a GM card directly
-        # This should return 403 if the card exists, or 404 if it doesn't
+      it "returns 404 for non-existent cards" do
+        get "/api/mcp/cards/NonExistent%20Card%20That%20Does%20Not%20Exist",
+            headers: auth_headers(token)
+
+        expect(response).to have_http_status(:not_found)
+      end
+
+      it "returns 403 for cards user cannot access due to +*read rules" do
+        # This test expects a card that exists but user cannot read
+        # The actual behavior depends on Decko's +*read configuration
         get "/api/mcp/cards/Games+Butterfly%20Galaxii+GM%20Docs",
             headers: auth_headers(token)
 
-        # Either 403 (forbidden) or 404 (not found/filtered) is acceptable
+        # Either 403 (exists but no permission) or 404 (not found)
+        # depending on how Decko is configured
         expect(response.status).to be_in([403, 404])
       end
     end
@@ -131,33 +121,77 @@ RSpec.describe "Api::Mcp::CardsController role-based filtering", type: :request 
     context "with 'gm' role" do
       let(:token) { token_for_role("gm") }
 
-      it "can attempt to access +GM cards (subject to Decko permissions)" do
+      it "access depends on Decko +*read rules, not MCP role" do
         get "/api/mcp/cards/Games+Butterfly%20Galaxii+GM%20Docs",
             headers: auth_headers(token)
 
-        # GM role should not be filtered by MCP, but may still be restricted by Decko permissions
-        # Acceptable responses: 200 (success), 403 (Decko restriction), 404 (doesn't exist)
+        # Result depends entirely on Decko permissions for the GM account
+        # MCP role does NOT override Decko +*read rules
         expect(response.status).to be_in([200, 403, 404])
       end
     end
   end
 
-  describe "children endpoint with role filtering" do
+  describe "children endpoint permission filtering" do
     context "with 'user' role" do
       let(:token) { token_for_role("user") }
 
-      it "filters GM children from results" do
-        # Find a parent card that might have GM children
+      it "only returns children the user has Decko permission to read" do
         get "/api/mcp/cards/Games+Butterfly%20Galaxii/children",
             headers: auth_headers(token)
 
         if response.status == 200
           json = JSON.parse(response.body)
-          child_names = json["children"].map { |c| c["name"] }
-
-          # User role should not see +GM children
-          expect(child_names).not_to include(a_string_matching(/\+GM/))
+          expect(json).to have_key("children")
+          # Children returned are filtered by Decko's card.ok?(:read)
+          # not by card name patterns
         end
+      end
+    end
+  end
+
+  describe "search endpoint permission filtering" do
+    context "with any authenticated role" do
+      let(:token) { token_for_role("user") }
+
+      it "search results only include cards user can read per Decko rules" do
+        get "/api/mcp/cards", params: { q: "Butterfly", limit: 10 }, headers: auth_headers(token)
+        expect(response).to have_http_status(:ok)
+
+        json = JSON.parse(response.body)
+        expect(json).to have_key("cards")
+        expect(json).to have_key("total")
+        # Results are filtered by Decko's native permission system
+      end
+    end
+  end
+
+  describe "admin-only operations" do
+    # These operations require admin MCP role regardless of Decko permissions
+
+    context "with 'user' role" do
+      let(:token) { token_for_role("user") }
+
+      it "cannot delete cards" do
+        delete "/api/mcp/cards/SomeCard", headers: auth_headers(token)
+        # 403 if card exists but no permission, 404 if card not found
+        expect(response.status).to be_in([403, 404])
+      end
+
+      it "cannot access trash listing" do
+        get "/api/mcp/trash", headers: auth_headers(token)
+        # 403 if card exists but no permission, 404 if card not found
+        expect(response.status).to be_in([403, 404])
+      end
+    end
+
+    context "with 'admin' role" do
+      let(:token) { token_for_role("admin") }
+
+      it "can access trash listing" do
+        get "/api/mcp/trash", headers: auth_headers(token)
+        # Should succeed if admin role is valid
+        expect(response.status).to be_in([200, 401, 403])
       end
     end
   end

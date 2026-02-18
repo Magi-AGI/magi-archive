@@ -93,24 +93,20 @@ module Api
       def build_term_index(scope, options)
         index = {}
 
-        # Search for cards - using a name pattern approach
-        query = { limit: 2000 }
-
-        # If scope is specified, search for cards starting with that scope
-        if scope.present?
-          # Use 'name' match to find cards under this scope
-          query[:name] = ["match", scope]
-        end
-
         # Get cards and build index
         Card::Auth.as(current_account.name) do
-          cards = Card.search(query.merge(return: :name))
+          cards = if scope.present?
+                    # Decko stores compound card names via left_id/right_id relationships,
+                    # not in the name column. We need to find all descendants recursively.
+                    scope_card = Card.fetch(scope)
+                    return index unless scope_card
 
-          # Filter to only cards that start with the scope
-          if scope.present?
-            scope_prefix = "#{scope}+"
-            cards = cards.select { |name| name.start_with?(scope_prefix) || name == scope }
-          end
+                    # Use recursive left_id traversal to find all descendants
+                    scope_prefix = "#{scope}+"
+                    find_all_descendants(scope_card).map(&:name)
+                  else
+                    Card.search(limit: 2000, return: :name)
+                  end
 
           cards.each do |name|
             next if name == scope  # Skip the scope card itself
@@ -356,6 +352,34 @@ module Api
         although though while whereas because since unless
         like also well back even still
       ]).freeze
+
+      # Recursively find all descendant cards by following left_id
+      def find_all_descendants(parent_card, max_depth: 10)
+        return [] unless parent_card
+        
+        descendants = []
+        to_process = [parent_card]
+        processed_ids = Set.new([parent_card.id])
+        depth = 0
+        
+        while to_process.any? && depth < max_depth
+          current_batch = to_process
+          to_process = []
+          depth += 1
+          
+          current_batch.each do |card|
+            children = Card.where(left_id: card.id).where(trash: false).to_a
+            children.each do |child|
+              next if processed_ids.include?(child.id)
+              processed_ids.add(child.id)
+              descendants << child
+              to_process << child
+            end
+          end
+        end
+        
+        descendants
+      end
 
       def stopword?(term)
         STOPWORDS.include?(term.downcase)
