@@ -1,6 +1,6 @@
 source "http://rubygems.org"
 
-gem "decko"
+gem "decko", "~> 0.20.0"
 gem "nokogiri"
 
 
