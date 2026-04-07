@@ -128,4 +128,118 @@ namespace :mcp do
   rescue StandardError => e
     puts "⚠️  Failed to assign role for #{user_card.name}: #{e.message}"
   end
+
+  desc "Repair permission cache for all child cards under restricted parents"
+  task repair_permissions: :environment do
+    # Parents with +*self+*read rules that restrict access
+    restricted_parents = [
+      "Games+Butterfly Galaxii+GM Docs",
+      "Games+Elowyn",
+      "Games+Elowyn+transcripts"
+    ]
+
+    puts "🔧 Repairing permission cache for cards under restricted parents..."
+    puts ""
+
+    total_repaired = 0
+
+    Card::Auth.as_bot do
+      restricted_parents.each do |parent_name|
+        parent = Card.fetch(parent_name)
+        unless parent
+          puts "⚠️  Parent card not found: #{parent_name}"
+          next
+        end
+
+        # Get parent's read rule for reference
+        parent_rule = Card.fetch(parent.read_rule_id)
+        puts "📁 #{parent_name}"
+        puts "   Read rule: #{parent_rule&.name || 'unknown'}"
+        puts "   Content: #{parent_rule&.content&.truncate(50) || 'N/A'}"
+
+        # Find all cards that start with this parent name (children)
+        children = Card.where("name LIKE ? AND trash = ?", "#{parent_name}+%", false)
+
+        repaired_count = 0
+        children.each do |child|
+          old_rule_id = child.read_rule_id
+          old_rule = Card.fetch(old_rule_id)
+
+          # Load set modules and repair
+          child.include_set_modules
+          child.repair_permissions!
+
+          new_rule_id = child.read_rule_id
+          new_rule = Card.fetch(new_rule_id)
+
+          if old_rule_id != new_rule_id
+            puts "   ✓ Fixed: #{child.name}"
+            puts "     Was: #{old_rule&.name || old_rule_id} → Now: #{new_rule&.name || new_rule_id}"
+            repaired_count += 1
+          end
+        end
+
+        puts "   Checked #{children.count} children, repaired #{repaired_count}"
+        puts ""
+        total_repaired += repaired_count
+      end
+    end
+
+    puts "✅ Done! Repaired #{total_repaired} cards total."
+    puts ""
+    puts "💡 If issues persist, also try: bundle exec rake card:reset"
+  end
+
+  desc "Check permission status for a specific card and its children"
+  task :check_permissions, [:card_name] => :environment do |_t, args|
+    card_name = args[:card_name]
+    unless card_name
+      puts "Usage: bundle exec rake mcp:check_permissions[CardName]"
+      puts "Example: bundle exec rake 'mcp:check_permissions[Games+Butterfly Galaxii+GM Docs]'"
+      exit 1
+    end
+
+    Card::Auth.as_bot do
+      card = Card.fetch(card_name)
+      unless card
+        puts "❌ Card not found: #{card_name}"
+        exit 1
+      end
+
+      puts "🔍 Permission check for: #{card_name}"
+      puts ""
+
+      # Check the card itself
+      rule = Card.fetch(card.read_rule_id)
+      puts "📄 #{card.name}"
+      puts "   Type: #{card.type_name}"
+      puts "   read_rule_id: #{card.read_rule_id}"
+      puts "   read_rule_class: #{card.read_rule_class}"
+      puts "   Rule card: #{rule&.name || 'NOT FOUND'}"
+      puts "   Rule content: #{rule&.content || 'N/A'}"
+      puts ""
+
+      # Check anonymous access
+      Card::Auth.as(:anonymous) do
+        can_read = card.ok?(:read)
+        puts "   Anonymous can read: #{can_read ? '❌ YES (PROBLEM!)' : '✅ NO (correct)'}"
+      end
+      puts ""
+
+      # Check children
+      children = Card.where("name LIKE ? AND trash = ?", "#{card_name}+%", false).limit(10)
+      if children.any?
+        puts "📁 First #{children.count} children:"
+        children.each do |child|
+          child_rule = Card.fetch(child.read_rule_id)
+          Card::Auth.as(:anonymous) do
+            can_read = child.ok?(:read)
+            status = can_read ? "❌ PUBLIC" : "✅ PROTECTED"
+            puts "   #{status} #{child.name.sub(card_name + '+', '+')}"
+            puts "            Rule: #{child_rule&.name || child.read_rule_id}"
+          end
+        end
+      end
+    end
+  end
   end

@@ -43,12 +43,20 @@ Decko.application.routes.draw do
           get :nests
           get :links
           get :linked_by
+          put :rename
+          # History endpoints (Phase 4)
+          get :history
+          get 'history/:act_id', action: :revision, as: :revision
+          post :restore
         end
 
         collection do
           post :batch
         end
       end
+
+      # Trash listing (admin only, Phase 4)
+      resources :trash, only: [:index]
 
       # Render endpoints (Phase 2)
       post 'render', to: 'render#html_to_markdown'
@@ -57,19 +65,27 @@ Decko.application.routes.draw do
       # Query endpoint (Phase 3)
       post 'run_query', to: 'query#run'
 
+      # Auto-link endpoint (cross-reference discovery)
+      post 'auto_link', to: 'auto_link#create'
+
       # Validation endpoints
-      namespace :validation do
-        post 'tags', to: 'validation#validate_tags'
-        post 'structure', to: 'validation#validate_structure'
-        get 'requirements/:type', to: 'validation#requirements'
-        post 'recommend_structure', to: 'validation#recommend_structure'
-        post 'suggest_improvements', to: 'validation#suggest_improvements'
+      scope :validation, controller: "validation" do
+        post 'tags', action: :validate_tags
+        post 'structure', action: :validate_structure
+        get 'requirements/:type', action: :requirements
+        post 'recommend_structure', action: :recommend_structure
+        post 'suggest_improvements', action: :suggest_improvements
       end
 
       # Admin endpoints (admin role required)
       namespace :admin do
         resources :api_keys, only: [:index, :show, :create, :update, :destroy]
-        post 'database/backup', to: 'database#backup'
+        
+        # Database backup operations (flat routes, no nested namespace)
+        get 'database/backup', to: 'database#backup'
+        get 'database/backup/list', to: 'database#list_backups'
+        get 'database/backup/download/:filename', to: 'database#download_backup', constraints: { filename: /[^\/]+/ }
+        delete 'database/backup/:filename', to: 'database#delete_backup', constraints: { filename: /[^\/]+/ }
       end
     end
   end

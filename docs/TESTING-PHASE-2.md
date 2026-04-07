@@ -564,3 +564,37 @@ Run tests now:
 ```bash
 bundle exec rspec spec/mcp_api/ --format documentation
 ```
+
+---
+
+## Known Limitations
+
+### EC2 Production Server Testing
+
+The production EC2 server uses AWS RDS PostgreSQL and does not have a local PostgreSQL instance configured for running RSpec tests. Tests that require database access will fail with:
+
+```
+ActiveRecord::ConnectionNotEstablished:
+  connection to server on socket "/var/run/postgresql/.s.PGSQL.5432" failed: No such file or directory
+```
+
+**Current workaround**: Run tests locally with a PostgreSQL database, then deploy to production.
+
+**Future improvement**: Consider setting up a local PostgreSQL test database on a dedicated development/staging server to enable running RSpec tests remotely. This would allow:
+- CI/CD pipeline integration for automated testing before deployment
+- Quick verification of fixes on the server
+- Better test coverage in production-like environments
+
+To set this up on a future development server:
+```bash
+# Install PostgreSQL
+sudo apt install -y postgresql postgresql-contrib
+
+# Create test database
+sudo -u postgres createuser -s ubuntu
+createdb magi_archive_test
+
+# Configure config/database.yml test environment
+# Then run tests with:
+RAILS_ENV=test bundle exec rspec spec/
+```
