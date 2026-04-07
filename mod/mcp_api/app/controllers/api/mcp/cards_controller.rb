@@ -324,8 +324,7 @@ module Api
 
       # Sanitize user input for SQL LIKE patterns
       def sanitize_sql_like_param(value)
-        # Escape %, _, and \ which are special in LIKE
-        value.gsub("\\", "\\\\\\\\").gsub("%", "\\%").gsub("_", "\\_")
+        ActiveRecord::Base.sanitize_sql_like(value)
       end
 
       def build_search_query
