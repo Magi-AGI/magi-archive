@@ -5,12 +5,24 @@ module Api
     class BaseController < ActionController::API
       include RateLimitable
 
+      # Set thread-local flag for reCAPTCHA bypass during API requests
+      before_action :set_mcp_thread_flag
       # Authentication for all MCP API endpoints (except auth)
       before_action :authenticate_mcp_request!, unless: :auth_endpoint?
+      # Clean up thread-local flag after request
+      after_action :clear_mcp_thread_flag
 
       rescue_from StandardError, with: :handle_error
 
       private
+
+      def set_mcp_thread_flag
+        Thread.current[:mcp_api_request] = true
+      end
+
+      def clear_mcp_thread_flag
+        Thread.current[:mcp_api_request] = nil
+      end
 
       def auth_endpoint?
         controller_name == "auth" || controller_name == "jwks"
@@ -60,23 +72,14 @@ module Api
         end
 
         # Fallback to service accounts if actual user not found
-        # First check for role-specific env var (e.g., MCP_MAGI_TEAM_NAME)
-        role = payload["role"]
-        role_env_key = "MCP_#{role.upcase.tr(' ', '_')}_NAME"
-        account_name = ENV[role_env_key]
-
-        # Fall back to legacy role mappings for backwards compatibility
-        account_name ||= case role&.downcase
-                         when "user"
-                           ENV.fetch("MCP_USER_NAME", "mcp-user")
-                         when "gm", "game master"
-                           ENV.fetch("MCP_GM_NAME", "mcp-gm")
-                         when "admin", "administrator"
-                           ENV.fetch("MCP_ADMIN_NAME", "mcp-admin")
-                         else
-                           # For any other role, try a generic service account
-                           ENV.fetch("MCP_DEFAULT_NAME", "mcp-user")
-                         end
+        account_name = case payload["role"]
+                       when "user"
+                         ENV.fetch("MCP_USER_NAME", "mcp-user")
+                       when "gm"
+                         ENV.fetch("MCP_GM_NAME", "mcp-gm")
+                       when "admin"
+                         ENV.fetch("MCP_ADMIN_NAME", "mcp-admin")
+                       end
 
         Card[account_name] if account_name
       end

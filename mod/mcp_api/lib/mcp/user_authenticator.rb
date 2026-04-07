@@ -140,17 +140,52 @@ module Mcp
     # @param email [String, nil] Optional email for authentication
     # @return [Boolean] True if password is valid
 
+    # Check if a user has admin status.
+    # Card#admin? (a Decko Set method) may not be loaded on Card objects
+    # returned by Card.find_by_name, so we also check the Administrator
+    # role's member list directly.
+    def self.check_admin_status(user_card)
+      # Try card.admin? (Decko Set method - may not be loaded)
+      if user_card.respond_to?(:admin?)
+        begin
+          return true if user_card.admin?
+        rescue StandardError
+          # Set method not functional on this card instance
+        end
+      end
+
+      # Check Administrator+*members for this user
+      begin
+        admin_card = Card.fetch("Administrator")
+        if admin_card
+          members = admin_card.fetch(:members)
+          if members&.respond_to?(:item_names)
+            return true if members.item_names.include?(user_card.name)
+          end
+        end
+      rescue StandardError
+        # Administrator card or members not accessible
+      end
+
+      false
+    end
+
     def self.determine_role(user_card)
-      Rails.logger.info("DEBUG determine_role called for user: #{user_card.name}")
+      Rails.logger.info("determine_role called for user: #{user_card.name}")
+
+      # Check admin first. Decko tracks Administrator membership separately
+      # from the +*roles virtual search card, so we need dedicated checks.
+      if check_admin_status(user_card)
+        Rails.logger.info("determine_role: #{user_card.name} detected as admin")
+        return ::Mcp::Roles::ADMIN
+      end
 
       # Get all roles for this user from Decko
       user_roles = get_user_roles(user_card)
-      Rails.logger.info("DEBUG user roles from Decko: #{user_roles.inspect}")
+      Rails.logger.info("determine_role: #{user_card.name} roles: #{user_roles.inspect}")
 
       # Return the highest-privilege role using centralized Roles module
-      role = ::Mcp::Roles.highest_role(user_roles)
-      Rails.logger.info("DEBUG determined role: #{role}")
-      role
+      ::Mcp::Roles.highest_role(user_roles)
     end
 
     # Get all Decko roles assigned to a user

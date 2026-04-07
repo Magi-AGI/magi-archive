@@ -11,17 +11,24 @@ module Api
       # GET /api/mcp/cards
       # Search/list cards with filters
       def index
-        query = build_search_query
         limit = [(params[:limit] || 50).to_i, 100].min
         offset = (params[:offset] || 0).to_i
         include_virtual = params[:include_virtual] == "true" || params[:include_virtual] == true
 
-        cards = execute_search(query, limit, offset, include_virtual: include_virtual)
-        # For multi-word searches, use actual filtered count instead of pre-filter count
-        if @name_filter_words && @name_filter_words.any?
-          total = cards.size
+        if params[:updated_since] || params[:updated_before]
+          # Use SQL-level pagination for date range queries.
+          # Decko CQL does not support updated_at filtering, so the old approach
+          # loaded ALL matching cards into memory to filter by date in Ruby.
+          # With ~10K cards, this caused 776MB+ memory bloat and 14s+ GC pauses.
+          cards, total = execute_date_range_search(limit, offset)
         else
-          total = count_search_results(query, include_virtual: include_virtual)
+          query = build_search_query
+          cards = execute_search(query, limit, offset, include_virtual: include_virtual)
+          if @name_filter_words && @name_filter_words.any?
+            total = cards.size
+          else
+            total = count_search_results(query, include_virtual: include_virtual)
+          end
         end
 
         render json: {
@@ -398,6 +405,68 @@ module Api
           { card: @card.name, hint: "Check card permissions (+*read rules) or contact an admin." }
         )
       end
+
+# SQL-based search for date range queries.
+# Uses ActiveRecord directly instead of Decko CQL to get proper
+# SQL-level LIMIT/OFFSET/WHERE/COUNT. This prevents loading all
+# matching cards into Ruby memory for post-filtering.
+def execute_date_range_search(limit, offset)
+  Card::Auth.as(current_account.name) do
+    scope = Card.where(trash: false)
+
+    if params[:updated_since]
+      scope = scope.where("cards.updated_at >= ?", Time.parse(params[:updated_since]))
+    end
+    if params[:updated_before]
+      scope = scope.where("cards.updated_at < ?", Time.parse(params[:updated_before]))
+    end
+
+    if params[:type]
+      type_card = Card.fetch(params[:type])
+      scope = scope.where(type_id: type_card.id) if type_card
+    end
+
+    if params[:q]
+      escaped = sanitize_sql_like_param(params[:q])
+      search_in = params[:search_in] || "name"
+      case search_in
+      when "content"
+        scope = scope.where("cards.db_content LIKE ?", "%#{escaped}%")
+      when "both"
+        scope = scope.where("cards.name LIKE ? OR cards.db_content LIKE ?",
+                            "%#{escaped}%", "%#{escaped}%")
+      else
+        scope = scope.where("cards.name LIKE ?", "%#{escaped}%")
+      end
+    end
+
+    if params[:prefix]
+      escaped = sanitize_sql_like_param(params[:prefix])
+      scope = scope.where("cards.name LIKE ?", "#{escaped}%")
+    end
+
+    if params[:not_name]
+      pattern = params[:not_name].gsub("*", "%")
+      scope = scope.where("cards.name NOT LIKE ?", pattern)
+    end
+
+    # Filter by permissions
+    scope = scope.order(updated_at: :desc)
+    total = scope.count
+    cards = scope.limit(limit).offset(offset).to_a
+
+    # Post-filter by view permissions (must happen after SQL pagination)
+    cards = cards.select { |c| can_view_card?(c) }
+
+    [cards, total]
+  end
+end
+
+# Sanitize user input for SQL LIKE patterns
+def sanitize_sql_like_param(value)
+  # Use Rails built-in sanitizer for LIKE wildcards
+  ActiveRecord::Base.sanitize_sql_like(value)
+end
 
       def build_search_query
         query = {}
