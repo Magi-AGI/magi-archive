@@ -9,12 +9,20 @@ module Api
       # GET /api/mcp/cards
       # Search/list cards with filters
       def index
-        query = build_search_query
         limit = [(params[:limit] || 50).to_i, 100].min
         offset = (params[:offset] || 0).to_i
 
-        cards = execute_search(query, limit, offset)
-        total = count_search_results(query)
+        if params[:updated_since] || params[:updated_before]
+          # Use SQL-level pagination for date range queries.
+          # Decko CQL doesn't support updated_at filtering, so the old approach
+          # loaded ALL matching cards into memory to filter by date in Ruby.
+          # With ~10K cards, this caused 776MB+ memory bloat and 14s+ GC pauses.
+          cards, total = execute_date_range_search(limit, offset)
+        else
+          query = build_search_query
+          cards = execute_search(query, limit, offset)
+          total = count_search_results(query)
+        end
 
         render json: {
           cards: cards.map { |c| card_summary_json(c) },
@@ -250,6 +258,76 @@ module Api
         )
       end
 
+      # SQL-based search for date range queries.
+      # Uses ActiveRecord directly instead of Decko CQL to get proper
+      # SQL-level LIMIT/OFFSET/WHERE/COUNT. This prevents loading all
+      # matching cards into Ruby memory for post-filtering.
+      def execute_date_range_search(limit, offset)
+        Card::Auth.as(current_account.name) do
+          scope = Card.where(trash: false)
+
+          # Date filters at SQL level
+          if params[:updated_since]
+            scope = scope.where("cards.updated_at >= ?", Time.parse(params[:updated_since]))
+          end
+          if params[:updated_before]
+            scope = scope.where("cards.updated_at < ?", Time.parse(params[:updated_before]))
+          end
+
+          # Type filter at SQL level
+          if params[:type]
+            type_card = Card.fetch(params[:type])
+            scope = scope.where(type_id: type_card.id) if type_card
+          end
+
+          # Name search at SQL level
+          if params[:q]
+            escaped = sanitize_sql_like_param(params[:q])
+            search_in = params[:search_in] || "name"
+
+            case search_in
+            when "content"
+              scope = scope.where("cards.db_content LIKE ?", "%#{escaped}%")
+            when "both"
+              scope = scope.where("cards.name LIKE ? OR cards.db_content LIKE ?",
+                                  "%#{escaped}%", "%#{escaped}%")
+            else
+              scope = scope.where("cards.name LIKE ?", "%#{escaped}%")
+            end
+          end
+
+          # Prefix filter
+          if params[:prefix]
+            escaped = sanitize_sql_like_param(params[:prefix])
+            scope = scope.where("cards.name LIKE ?", "#{escaped}%")
+          end
+
+          # Exclusion filter
+          if params[:not_name]
+            pattern = params[:not_name].gsub("*", "%")
+            scope = scope.where("cards.name NOT LIKE ?", pattern)
+          end
+
+          # GM/AI content filter for user role
+          if current_role == "user"
+            scope = scope.where("cards.name NOT LIKE ?", "%+GM%")
+                         .where("cards.name NOT LIKE ?", "%+AI%")
+          end
+
+          scope = scope.order(updated_at: :desc)
+          total = scope.count
+          cards = scope.limit(limit).offset(offset).to_a
+
+          [cards, total]
+        end
+      end
+
+      # Sanitize user input for SQL LIKE patterns
+      def sanitize_sql_like_param(value)
+        # Escape %, _, and \ which are special in LIKE
+        value.gsub("\\", "\\\\\\\\").gsub("%", "\\%").gsub("_", "\\_")
+      end
+
       def build_search_query
         query = {}
 
@@ -282,37 +360,15 @@ module Api
           query[:not] = { name: ["like", pattern] }
         end
 
-        # Handle date range queries
-        # NOTE: Decko CQL does NOT support updated_at/created_at filtering at all
-        # See: https://decko.org/CQL_Syntax - only id, name, type, content are queryable
-        # We must fetch all cards matching other criteria and filter by date in Ruby
-        if params[:updated_since] || params[:updated_before]
-          @filter_date_range = {}
-          @filter_date_range[:since] = Time.parse(params[:updated_since]) if params[:updated_since]
-          @filter_date_range[:before] = Time.parse(params[:updated_before]) if params[:updated_before]
-          # Sort by update descending to get recent cards first (helps with pagination)
-          query[:sort] = "update"
-          query[:dir] = "desc"
-        end
+        # Date range queries are handled by execute_date_range_search (SQL path)
+        # and never reach this CQL builder. See index action.
 
         query
       end
 
       def execute_search(query, limit, offset)
-        # Execute search with proper auth context
         cards = Card::Auth.as(current_account.name) do
           Card.search(query.merge(limit: limit, offset: offset))
-        end
-
-        # Apply date range post-filter if needed
-        # Required because Decko CQL doesn't support updated_at filtering
-        if @filter_date_range
-          cards = cards.select do |c|
-            in_range = true
-            in_range = in_range && (c.updated_at >= @filter_date_range[:since]) if @filter_date_range[:since]
-            in_range = in_range && (c.updated_at <= @filter_date_range[:before]) if @filter_date_range[:before]
-            in_range
-          end
         end
 
         # Filter out GM/AI content for user role

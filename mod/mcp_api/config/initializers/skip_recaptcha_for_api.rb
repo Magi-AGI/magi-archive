@@ -11,6 +11,12 @@ Card.class_eval do
       return false
     end
     
+    # Also skip if thread-local MCP flag is set (for batch operations)
+    if Thread.current[:mcp_api_request]
+      Rails.logger.info "MCP API: Skipping reCAPTCHA (thread-local flag)"
+      return false
+    end
+
     # Original Decko reCAPTCHA validation logic
     return false unless Card::Codename.exist? :captcha
     
