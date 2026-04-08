@@ -44,6 +44,8 @@ Decko.application.routes.draw do
           get :links
           get :linked_by
           put :rename
+          get :search_content
+          get :outline
           # History endpoints (Phase 4)
           get :history
           get 'history/:act_id', action: :revision, as: :revision
