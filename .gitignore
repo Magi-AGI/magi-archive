@@ -105,3 +105,4 @@ __pycache__/
 *.pyc
 /backups/
 temp_mattermost_config.json
+/backups
