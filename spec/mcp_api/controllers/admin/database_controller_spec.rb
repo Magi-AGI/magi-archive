@@ -33,23 +33,36 @@ RSpec.describe Api::Mcp::Admin::DatabaseController, type: :request do
 
   describe "GET /api/mcp/admin/database/backup" do
     context "with admin role" do
-      it "creates and returns a database backup" do
+      it "creates and returns a gzip-compressed database backup (T8)" do
         get "/api/mcp/admin/database/backup",
             headers: { "Authorization" => "Bearer #{admin_token}" }
 
         expect(response).to have_http_status(:success)
-        expect(response.headers["Content-Type"]).to eq("application/sql")
+        # T8: backups are now gzip-compressed
+        expect(response.headers["Content-Type"]).to eq("application/gzip")
         expect(response.headers["Content-Disposition"]).to include("attachment")
         expect(response.body).not_to be_empty
+        # gzip magic bytes
+        expect(response.body.bytes.first(2)).to eq([0x1f, 0x8b])
       end
 
-      it "creates backup file with timestamp in name" do
+      it "exposes an X-Backup-SHA256 checksum matching the body (T8)" do
+        get "/api/mcp/admin/database/backup",
+            headers: { "Authorization" => "Bearer #{admin_token}" }
+
+        expect(response).to have_http_status(:success)
+        # The client (verify_and_save) checks this header against the bytes it
+        # received so "success" means the dump actually landed intact.
+        expect(response.headers["X-Backup-SHA256"]).to eq(Digest::SHA256.hexdigest(response.body))
+      end
+
+      it "creates backup file with a .sql.gz timestamped name (T8)" do
         get "/api/mcp/admin/database/backup",
             headers: { "Authorization" => "Bearer #{admin_token}" }
 
         expect(response).to have_http_status(:success)
         filename = response.headers["Content-Disposition"].match(/filename="(.+)"/)[1]
-        expect(filename).to match(/magi_archive_backup_\d{8}_\d{6}\.sql/)
+        expect(filename).to match(/\Amagi_archive_backup_\d{8}_\d{6}\.sql\.gz\z/)
       end
     end
 
@@ -118,6 +131,15 @@ RSpec.describe Api::Mcp::Admin::DatabaseController, type: :request do
         # Most recent should be first
         expect(filenames).to eq(filenames.sort.reverse)
       end
+
+      it "includes .sql.gz backups in the listing (T8)" do
+        File.binwrite(backup_dir.join("magi_archive_backup_20260101_000000.sql.gz"), "\x1f\x8b\x08gz")
+        get "/api/mcp/admin/database/backup/list",
+            headers: { "Authorization" => "Bearer #{admin_token}" }
+        json = JSON.parse(response.body)
+        names = json["backups"].map { |b| b["filename"] }
+        expect(names).to include("magi_archive_backup_20260101_000000.sql.gz")
+      end
     end
 
     context "when no backups exist" do
@@ -151,6 +173,17 @@ RSpec.describe Api::Mcp::Admin::DatabaseController, type: :request do
         expect(response).to have_http_status(:success)
         expect(response.body).to eq("test backup content")
         expect(response.headers["Content-Disposition"]).to include(test_filename)
+      end
+
+      it "serves .sql.gz with gzip content-type + checksum header (T8)" do
+        gz = "magi_archive_backup_20251203_120000.sql.gz"
+        File.binwrite(backup_dir.join(gz), "\x1f\x8b\x08binary\x00gzip")
+        get "/api/mcp/admin/database/backup/download/#{gz}",
+            headers: { "Authorization" => "Bearer #{admin_token}" }
+
+        expect(response).to have_http_status(:success)
+        expect(response.headers["Content-Type"]).to eq("application/gzip")
+        expect(response.headers["X-Backup-SHA256"]).to eq(Digest::SHA256.hexdigest(response.body))
       end
     end
 
