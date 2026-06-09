@@ -50,10 +50,11 @@ module Api
         return render_forbidden_content unless can_view_card?(@card)
 
         if params[:rendered] == "true" || params[:rendered] == true
-          # Use as_bot for rendering since we already verified can_view_card?
-          # above. The user account may lack permission on nested subcards that
-          # are included via {{...}} nests, but bot can resolve all inclusions.
-          rendered_content = Card::Auth.as_bot do
+          # Render as the requesting user so nested {{...}} inclusions the user
+          # is NOT permitted to read are not resolved into the output. (Was
+          # as_bot, which leaked restricted nested content regardless of the
+          # requester's permissions.)
+          rendered_content = Card::Auth.as(current_account.name) do
             @card.format(:html).render(:core)
           end
           render json: card_full_json(@card, rendered_content: rendered_content)
@@ -176,6 +177,9 @@ module Api
 
         children_cards = fetch_children(@card, depth: depth).select { |c| can_view_card?(c) }
         children_cards = children_cards.reject { |c| detect_virtual_card(c) } unless include_virtual
+
+        # T7: optional ordering (sort=name|created|updated, dir=asc|desc).
+        children_cards = sort_cards(children_cards, params[:sort], params[:dir])
 
         # Apply pagination
         total = children_cards.size
@@ -539,6 +543,19 @@ module Api
         return nil unless left && right
 
         Card.where(left_id: left.id, right_id: right.id, trash: true).first
+      end
+
+      # T7: sort an array of cards by a friendly field/direction (used by list_children).
+      def sort_cards(cards, sort, dir)
+        key = case sort.to_s
+              when "name" then ->(c) { c.name.to_s.downcase }
+              when "created", "created_at" then ->(c) { c.created_at }
+              when "updated", "updated_at" then ->(c) { c.updated_at }
+              end
+        return cards unless key
+
+        sorted = cards.sort_by(&key)
+        dir.to_s == "asc" ? sorted : sorted.reverse
       end
 
       def set_card
