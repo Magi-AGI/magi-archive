@@ -27,7 +27,7 @@ module MagiArchive
       address: ENV['SMTP_ADDRESS'] || 'localhost',
       port: ENV['SMTP_PORT'] || 587,
       domain: ENV['SMTP_DOMAIN'] || 'localhost',
-      user_name: ENV['SMTP_USERNAME'],
+      user_name: ENV['SMTP_USERNAME'] || ENV['SMTP_USER'],
       password: ENV['SMTP_PASSWORD'],
       authentication: ENV['SMTP_AUTHENTICATION'] || 'plain',
       enable_starttls_auto: true
@@ -61,7 +61,7 @@ module MagiArchive
     # config.file_storage = :local
     # config.paths["files"] = "files"
     #
-    
+
     # For cloud storage use the following config options and add the
     # corresponding fog gem for your cloud service. For example for AWS add
     # `gem "fog-aws"` to your Gemfile. IMPORTANT: also see protocol and host
@@ -94,7 +94,7 @@ module MagiArchive
     #
     # Learn more about file storage options:
     #   http://decko.org/file_storage_options)
-    
+
 
     # ORIGIN AND RELATIVE_ROOT
     # The following option is used when generating absolute links and
@@ -105,7 +105,7 @@ module MagiArchive
     # be able to find permanent resources (which are stored with the deck).
     # This usually shows up as broken icons.
     #
-    # config.deck_origin = "https://mysite.com"
+    config.deck_origin = ENV.fetch("DECK_ORIGIN", "https://wiki.magi-agi.org")
     #
     # If your deck is not at the url's root but in a subdirectory, such as
     # mysite.com/mydeck, then you must configure the relative_url_root:
