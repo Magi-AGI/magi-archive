@@ -106,3 +106,33 @@ __pycache__/
 /backups/
 temp_mattermost_config.json
 /backups
+
+# Key / certificate material (NEVER commit private or public key files)
+*.pem
+*.key
+*.crt
+*.cert
+*.cer
+*.der
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Environment file variants and their backups (keep checked-in examples)
+.env.*
+!.env.example
+
+# Backup / snapshot / editor leftovers (never source of truth)
+*.bak
+*.bak-*
+*.backup
+*.backup-*
+*.backup[0-9]*
+*.before-*
+*.pre-*
+*.orig
+*.rej
+*.disabled
+*.save
+*.old
