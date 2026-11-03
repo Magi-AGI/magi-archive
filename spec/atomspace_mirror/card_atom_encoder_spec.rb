@@ -160,6 +160,14 @@ RSpec.describe CardAtomEncoder do
       expect(f["ip_address"]).to eq("sym" => "NoIP")
     end
 
+    # T9 / D-5: editor IPs never enter the Space or mirror_outbox.payload, even when the act has one.
+    it "emits the NoIP sentinel even when the act carries an IP address" do
+      a = action(card, act_obj: act(ip_address: "203.0.113.7"))
+      f = fields_of(enc(a), "DeckoProvenance")
+      expect(f["ip_address"]).to eq("sym" => "NoIP")
+      expect(enc(a).to_json).not_to include("203.0.113.7")
+    end
+
     it "encodes the Source-5 dual-actor auth fields from the auth snapshot, distinct from actor_id" do
       a = action(card, act_obj: act(actor_id: 10))
       f = fields_of(enc(a, auth: { current_id: 3, as_id: 5 }), "DeckoProvenance")

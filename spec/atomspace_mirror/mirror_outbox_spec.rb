@@ -89,6 +89,8 @@ RSpec.describe MirrorOutbox, type: :model do
           SQL
           expect(described_class.superseded_by_later_or_reconcile?(row)).to be(false)
         ensure
+          # The corrupt row must go first: re-adding the CHECK validates existing rows.
+          conn.execute("DELETE FROM mirror_outbox WHERE event_id = 'reconcile:corrupt:7'")
           conn.add_check_constraint(:mirror_outbox, "event_kind <> 'reconcile' OR action_id IS NULL",
                                     name: "mirror_outbox_reconcile_action_id_null")
         end

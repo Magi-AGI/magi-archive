@@ -5,7 +5,7 @@
 # completion). Operator runbook: ensure a FRESH (empty) sidecar Space first (Option A) -- restart the
 # sidecar before running; a failed run is marked 'failed' and must be re-run from scratch.
 namespace :atomspace_mirror do
-  desc "First-time bootstrap: sweep all cards into the Hyperon Space (Section 1 / Level 4)."
+  desc "First-time bootstrap: sweep all cards into the AtomSpace sidecar Space (Section 1 / Level 4)."
   task bootstrap: :environment do
     run = Bootstrap.new.run
     puts "[atomspace_mirror] bootstrap completed: run=#{run.id} a_start=#{run.a_start} " \

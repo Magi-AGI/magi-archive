@@ -14,7 +14,7 @@ require "time" # Time#iso8601 (stdlib; autoloaded under Decko/ActiveSupport but 
 # Input contract (verified against Decko card-1.110.0 on dev 2026-06-15):
 #   action          : Card::Action -- #id, #action_type (:create|:update|:delete), #draft,
 #                     #super_action_id, #card_id, #act, #card_changes, #card
-#   action.act      : Card::Act    -- #id, #actor_id, #acted_at, #ip_address
+#   action.act      : Card::Act    -- #id, #actor_id, #acted_at (#ip_address deliberately unread, D-5)
 #   action.card     : Card         -- the 14 source attributes; #references_out (Card::Reference)
 #   card_changes    : Card::Change -- #field (TRACKED_FIELDS name OR integer index), #value (new)
 #   pre_state       : Hash{field_name => old_value} for the changes array (string or symbol keys);
@@ -124,7 +124,6 @@ module CardAtomEncoder
   end
 
   def decko_provenance(action, card, pre_state, auth, ctx)
-    ip = action.act.ip_address
     atom "DeckoProvenance", [
       ["source",               SOURCE],
       ["event_schema_version", EVENT_SCHEMA_VERSION],
@@ -140,7 +139,7 @@ module CardAtomEncoder
       ["auth_current_id",      auth[:current_id]],   # Source-5 dual-actor (Card::Auth.serialize),
       ["auth_as_id",           auth[:as_id]],        # captured at action time by L2; JSON null if absent
       ["acted_at",             iso(action.act.acted_at)],
-      ["ip_address",           filled?(ip) ? ip : sym("NoIP")],
+      ["ip_address",           sym("NoIP")],                # D-5: never store the editor's IP
       ["stage",                STAGE],
       ["changes",              changes(action, pre_state)],
       ["agent_session_id",     ctx[:agent_session_id]],
@@ -223,7 +222,4 @@ module CardAtomEncoder
     time&.utc&.iso8601
   end
 
-  def filled?(val)
-    !(val.nil? || val.to_s.strip.empty?)
-  end
 end

@@ -1,5 +1,9 @@
 # atomspace_mirror (Lane A)
 
+> **Magi Archive notes.** Ported from `hyperon-wiki` at a pinned commit. Editor IP addresses are not
+> stored (`NoIP`). Deploy and operate this mod from the Magi runbook; the dev-box notes below describe
+> the source deck and are historical. Run mirror migrations only after any DB restore.
+
 Decko mod implementing the **AtomSpace Mirror** engine — the write-through mirror from
 Decko/Postgres to the Hyperon Space (Phase 4 of the SingularityNET RFP).
 
@@ -64,11 +68,12 @@ RAILS_ENV=production bundle exec rake db:migrate:up VERSION=20260614000001
 # post-check: count +1, version present, four mirror_* tables exist
 ```
 
-**Rollback** (additive + exactly reversible — touches no existing table):
+**Rollback** (additive; touches no existing table). The mirror has **three** migrations
+(`20260614000001`, `20260623000001`, `20260624000001`); delete all three `schema_migrations` rows.
+Dropping these tables permanently loses outbox rows and run reports. To keep them, take a fresh
+snapshot immediately before rolling back.
 ```bash
-RAILS_ENV=production bundle exec ruby -e 'require "./config/environment"; c=ActiveRecord::Base.connection; \
-  c.execute("DROP TABLE IF EXISTS mirror_reconcile_runs, mirror_bootstrap_runs, mirror_outbox, mirror_state CASCADE"); \
-  c.execute("DELETE FROM schema_migrations WHERE version = " + c.quote("20260614000001"))'
+RAILS_ENV=production bundle exec ruby -e 'require "./config/environment"; c=ActiveRecord::Base.connection;   c.execute("DROP TABLE IF EXISTS mirror_reconcile_runs, mirror_bootstrap_runs, mirror_outbox, mirror_state CASCADE");   c.execute("DELETE FROM schema_migrations WHERE version IN (" + %w[20260614000001 20260623000001 20260624000001].map { |v| c.quote(v) }.join(",") + ")")'
 ```
 
 > **Note:** the dev box's `pg_dump` (v14) is older than the RDS server (PG 17) — `pg_dump` and the
