@@ -310,6 +310,20 @@ RSpec.describe "AtomSpace L9 Magi security", type: :request do
     %w[mcp-user mcp-gm mcp-admin].each { |n| bot { Card.create!(name: n, type: "User") } unless Card[n] }
   end
 
+  describe "filter order" do
+    it "still authenticates first when BaseController's filters have been re-registered behind ours" do
+      allow(McpApi::JwtService).to receive(:verify_token).and_return(nil)
+      get "/api/mcp/atomspace_mirror/atom_types", headers: { "Authorization" => "Bearer bad" }
+      expect(response).to have_http_status(:unauthorized)
+
+      get "/api/mcp/atomspace_mirror/atom_types"
+      expect(response).to have_http_status(:unauthorized)
+
+      get "/api/mcp/atomspace_mirror/atom_types", headers: auth
+      expect(response).to have_http_status(:ok)
+    end
+  end
+
   describe "T19 unresolvable principals" do
     before { seed_service_accounts }
 

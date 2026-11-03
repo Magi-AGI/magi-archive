@@ -209,7 +209,11 @@ module Api
       end
 
       def require_user_principal!
-        sub = @current_mcp_payload && @current_mcp_payload["sub"]
+        # Re-evaluating BaseController moves its filters behind these, so never rely on their order.
+        authenticate_mcp_request! unless @current_mcp_payload
+        return if performed?
+
+        sub = @current_mcp_payload["sub"]
         unless sub.to_s.start_with?("user:")
           return render json: { error: "principal_not_permitted" }, status: :forbidden
         end
