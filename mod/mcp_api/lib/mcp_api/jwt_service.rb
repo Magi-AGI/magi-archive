@@ -6,8 +6,14 @@ require "openssl"
 module McpApi
   class JwtService
     class << self
-      # Generate RS256 JWT for given role and API key
-      def generate_token(role:, api_key_id:, expires_in: nil)
+      # Generate RS256 JWT for given role and API key.
+      # scopes: optional Array embedded as a space-delimited "scope" claim. Backward-compatible
+      # (omitting/empty => no scope claim). This service does NOT decide scope -- callers pass an
+      # already-authorized list. The mcp:atomspace:{read,write,admin} scopes come from
+      # McpApi::AtomspaceGrants (POLICY REV5: admin / Raw Data Analyst principals get all three;
+      # the ENV allowlist grants read only). The GENERIC mcp:admin scope is separate and is never
+      # minted by that policy -- AtomSpace authority is namespaced.
+      def generate_token(role:, api_key_id:, expires_in: nil, scopes: [])
         expires_in ||= token_ttl
         now = Time.now.to_i
 
@@ -20,6 +26,8 @@ module McpApi
           jti: SecureRandom.uuid,
           kid: key_id
         }
+        scope_list = Array(scopes).map(&:to_s).reject(&:empty?)
+        payload[:scope] = scope_list.join(" ") unless scope_list.empty?
 
         JWT.encode(payload, private_key, "RS256", kid: key_id)
       end
