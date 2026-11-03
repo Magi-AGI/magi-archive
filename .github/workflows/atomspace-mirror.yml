@@ -1,0 +1,30 @@
+name: atomspace-mirror
+
+on:
+  pull_request:
+    paths:
+      - "mod/atomspace_mirror/**"
+      - "mod/mcp_api/lib/atomspace/**"
+      - "spec/atomspace_mirror/**"
+      - "spec/mcp_api/atomspace/**"
+      - ".github/workflows/atomspace-mirror.yml"
+
+jobs:
+  no-db-specs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2.3"
+          bundler-cache: true
+      # No DB here. DB-backed specs need the seeded test database (see the runbook).
+      - run: >
+          bundle exec rspec
+          spec/atomspace_mirror/bootstrap_spec.rb spec/atomspace_mirror/canonical_projection_spec.rb
+          spec/atomspace_mirror/card_atom_encoder_spec.rb spec/atomspace_mirror/drain_worker_spec.rb
+          spec/atomspace_mirror/drift_monitor_spec.rb spec/atomspace_mirror/drift_reconciler_spec.rb
+          spec/atomspace_mirror/engine_load_chain_spec.rb spec/atomspace_mirror/mirror_drain_validator_spec.rb
+          spec/atomspace_mirror/mirror_outbox_writer_spec.rb spec/atomspace_mirror/mirror_spec.rb
+          spec/atomspace_mirror/reconcile_runner_spec.rb spec/atomspace_mirror/reconciler_spec.rb
+          spec/atomspace_mirror/sidecar_client_spec.rb --format progress

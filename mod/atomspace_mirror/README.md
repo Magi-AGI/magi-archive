@@ -1,7 +1,7 @@
 # atomspace_mirror (Lane A)
 
 > **Magi Archive notes.** Ported from `hyperon-wiki` at a pinned commit. Editor IP addresses are not
-> stored (`NoIP`). Deploy and operate this mod from the Magi runbook; the dev-box notes below describe
+> stored (`NoIP`). Deploy and operate this mod from `docs/atomspace/MAGI-ATOMSPACE-MIRROR-RUNBOOK.md`; the dev-box notes below describe
 > the source deck and are historical. Run mirror migrations only after any DB restore.
 
 Decko mod implementing the **AtomSpace Mirror** engine — the write-through mirror from

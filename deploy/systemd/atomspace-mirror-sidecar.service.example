@@ -1,0 +1,34 @@
+# Level 3 sidecar: holds the in-memory PyListSpace, serves the local IPC contract.
+# Install: copy to /etc/systemd/system/atomspace-mirror-sidecar.service (drop .example), then
+# `systemctl daemon-reload`. Start it only from the runbook (activation or coordinated rebuild).
+#
+# NO [Install] ON PURPOSE: do not `systemctl enable` this unit. The Space is in memory, so a boot start
+# comes up EMPTY while Postgres still says bootstrapped. Restart=no for the same reason: any exit is an
+# incident whose recovery is the coordinated rebuild. The drain BindsTo this unit and stops with it.
+#
+# Runs as its own user. Needs the sidecar change that adds SIDECAR_RUN_DIR_MODE (the original pin forces
+# 0700 on the run dir, which locks the group out). The deck user `ubuntu` joins group `atomspace` to reach
+# the socket. This is NOT a boundary against other processes running as ubuntu; see the runbook.
+[Unit]
+Description=AtomSpace Mirror sidecar (Level 3, in-memory PyListSpace)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=atomspace
+Group=atomspace
+WorkingDirectory=/opt/atomspace-mirror-sidecar
+# Creates /run/atomspace-mirror owned by User. Removed when the unit stops, so no stale socket survives.
+RuntimeDirectory=atomspace-mirror
+RuntimeDirectoryMode=0750
+# Sidecar tunables only; no DB credentials. Must set the same SIDECAR_RUN_DIR the deck uses.
+EnvironmentFile=/etc/atomspace-mirror.env
+# Fail before serving if the unit's own interpreter cannot import the engine.
+ExecStartPre=/opt/atomspace-mirror-sidecar/.venv/bin/python -c "import hyperon, atomspace_mirror_sidecar"
+ExecStart=/opt/atomspace-mirror-sidecar/.venv/bin/python -m atomspace_mirror_sidecar
+Restart=no
+# Set only after measuring post-bootstrap RSS (2-3x the measured value). See the runbook's memory guard.
+# MemoryMax=
+KillSignal=SIGTERM
+TimeoutStopSec=30

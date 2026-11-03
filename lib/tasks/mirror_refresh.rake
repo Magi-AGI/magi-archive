@@ -7,6 +7,22 @@ namespace :mirror_refresh do
     puts "mirror refresh precondition holds"
   end
 
+  desc "Write the STRICT filter manifest: ids and counts only, changes nothing (OUT=path)"
+  task strict_manifest: :environment do
+    require Rails.root.join("mod/atomspace_mirror/lib/mirror_strict_filter").to_s
+    report = MirrorStrictFilter.manifest.to_h_report
+    File.write(ENV.fetch("OUT"), JSON.pretty_generate(report))
+    puts report.except(:excluded_ids, :attachment_card_ids).to_json
+    abort "unresolved read rules: fix before any apply" if report[:unresolved_rule_ids].any?
+  end
+
+  desc "DESTRUCTIVE: apply the STRICT filter to a staged copy (CONFIRM_DB=<name of the live database>)"
+  task strict_apply: :environment do
+    require Rails.root.join("mod/atomspace_mirror/lib/mirror_strict_filter").to_s
+    plan = MirrorStrictFilter.apply!(confirm_db: ENV.fetch("CONFIRM_DB"))
+    puts plan.to_h_report.except(:excluded_ids, :attachment_card_ids).to_json
+  end
+
   desc "Audit cached read rules against Decko's resolution; REPAIR=1 repairs and re-audits (SPEC 8.7)"
   task acl_audit: :environment do
     require Rails.root.join("mod/atomspace_mirror/lib/mirror_acl_audit").to_s

@@ -1,0 +1,31 @@
+# Level 8 forward-drain worker: `rake atomspace_mirror:drain`.
+# Install: copy to /etc/systemd/system/atomspace-mirror-drain.service (drop .example), daemon-reload.
+# Start only from the runbook, after bootstrap completes.
+#
+# NO [Install] ON PURPOSE: a reboot must never resume the drain against an empty Space. BindsTo the sidecar,
+# so a sidecar exit stops the drain. Restart=on-failure only recovers a drain-only crash; the Postgres
+# advisory lock keeps it a singleton.
+[Unit]
+Description=AtomSpace Mirror forward-drain worker (Level 8)
+After=atomspace-mirror-sidecar.service
+BindsTo=atomspace-mirror-sidecar.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+# Reaches the sidecar's Unix socket.
+SupplementaryGroups=atomspace
+WorkingDirectory=/home/ubuntu/magi-archive
+# The same app env web uses (DB, RAILS_ENV, the activation gate), then the ops tunables.
+EnvironmentFile=/home/ubuntu/magi-archive/.env.production
+EnvironmentFile=/etc/atomspace-mirror.env
+Environment=RAILS_ENV=production
+# Verify these rbenv paths on the host before installing.
+Environment=PATH=/home/ubuntu/.rbenv/shims:/home/ubuntu/.rbenv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/.rbenv/shims/bundle exec rake atomspace_mirror:drain
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+# A stuck worker may be SIGKILLed here. That is safe: rows stay queued and the advisory lock releases.
+TimeoutStopSec=30
