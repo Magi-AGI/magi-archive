@@ -21,7 +21,7 @@ RSpec.describe Api::Mcp::AtomspaceMirrorController, type: :request do
   # (RS256), not MessageVerifier -- so we stub it to return a controlled payload (string keys,
   # as the controller reads them). This exercises the actual auth + scope-gate code path without
   # minting RS256 tokens (Codex). `sub` resolves @current_mcp_account via find_mcp_account.
-  def auth(role: "user", scope: nil, sub: "user:Administrator")
+  def auth(role: "user", scope: nil, sub: "user:Joe User")
     payload = { "sub" => sub, "role" => role }
     payload["scope"] = scope if scope
     allow(McpApi::JwtService).to receive(:verify_token).and_return(payload)
@@ -145,12 +145,15 @@ RSpec.describe Api::Mcp::AtomspaceMirrorController, type: :request do
       expect(JSON.parse(response.body)["results"]).to include("card_id" => 5)
     end
 
-    it "allows the DESTRUCTIVE delete with read + atomspace-admin and echoes the removal audit" do
+    it "allows the DESTRUCTIVE delete with read + atomspace-admin in a maintenance window and echoes the audit" do
       Atomspace::FakeReadClient.seed!([
         Atomspace::Atom.new(type: "DeckoCard", card_id: 5, fields: { "Name" => "c5" })
       ])
+      saved = ENV["ATOMSPACE_QUARANTINE_DELETE_ENABLED"]
+      ENV["ATOMSPACE_QUARANTINE_DELETE_ENABLED"] = "true"
       post "/api/mcp/atomspace_mirror/quarantine/card/5/delete",
            headers: auth(role: "admin", scope: "mcp:atomspace:read mcp:atomspace:admin")
+      ENV["ATOMSPACE_QUARANTINE_DELETE_ENABLED"] = saved
       expect(response).not_to have_http_status(:forbidden)
       results = JSON.parse(response.body)["results"]
       expect(results["card_id"]).to eq(5)
@@ -171,6 +174,10 @@ RSpec.describe Api::Mcp::AtomspaceMirrorController, type: :request do
     def stub_readiness(status)
       impl = Class.new { define_method(:check_event_ready) { |_event_id| status } }.new
       Atomspace::ReadConsistencyPort.impl = impl
+      # B3: a status is only revealed for an event whose card the caller can read.
+      card = Card::Auth.as_bot { Card.create!(name: "RYW #{SecureRandom.hex(4)}", type: "Basic", content: "open") }
+      MirrorOutbox.create!(event_id: "decko:action:1", event_kind: "decko_action", action_id: 1,
+                           card_id: card.id, status: "queued")
     end
 
     def ryw_get(scope: "mcp:atomspace:read")

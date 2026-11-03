@@ -13,16 +13,21 @@ module Api
   module Mcp
     # Lane C, Level 9 read surface. Lives in mod/mcp_api (NOT Lane A's mod/atomspace_mirror
     # engine). Gated by the mcp:atomspace:read scope; the card-scoped B3 quarantine surface
-    # additionally needs the NAMESPACED mcp:atomspace:admin scope (POLICY REV5 -- the generic
-    # mcp:admin scope is never minted for the AtomSpace surface, which made quarantine a
-    # permanent 403 under REV4).
+    # additionally needs the NAMESPACED mcp:atomspace:admin scope (the generic mcp:admin scope, which
+    # means wiki admin, never satisfies this gate).
     # Auth-on-read via Card::Auth.as multi-card filter (Invariant 9). Read-your-writes via the
     # L7 ReadConsistencyPort. Aggregate tools are gate-only (no card-scoped payload).
     class AtomspaceMirrorController < BaseController
       include AtomspaceReadFilter
 
+      # Magi (SPEC 8.3): only a real named user may use this surface. Runs before every other gate, so
+      # a role-fallback account from BaseController#find_mcp_account never acts as the ACL principal.
+      before_action :require_user_principal!
       before_action :require_atomspace_read_scope!, except: %i[quarantine_index quarantine_delete]
       before_action :require_quarantine_scope!, only: %i[quarantine_index quarantine_delete]
+      # Magi (SPEC 8.12): quarantine deletion is maintenance-only. Checked before readiness, so a
+      # refused delete neither touches the Space nor reveals mirror state.
+      before_action :require_quarantine_delete_window!, only: :quarantine_delete
       # READ-READINESS GATE (Phase 5 go-live blocker). Runs AFTER the scope gates (an unauthorized
       # caller still gets 403, never a readiness signal) and covers EVERY read action -- card-scoped
       # (incl. no-wait), aggregate, and admin quarantine -- so an empty / partially-populated / post-
@@ -126,7 +131,12 @@ module Api
 
         deadline = monotonic + max_wait
         loop do
-          case Atomspace::ReadConsistencyPort.check_event_ready(event_id)
+          status = Atomspace::ReadConsistencyPort.check_event_ready(event_id)
+          # Magi (SPEC 8.5.2): an event whose card the caller cannot read behaves exactly like one
+          # that does not exist, including timing.
+          status = :not_yet_inserted unless event_readable?(event_id)
+
+          case status
           when :ready
             return true
           when :failed
@@ -142,6 +152,13 @@ module Api
             sleep poll_interval
           end
         end
+      end
+
+      def event_readable?(event_id)
+        row = MirrorOutbox.find_by(event_id: event_id.to_s)
+        return false unless row
+
+        Card::Auth.as(@current_mcp_account.name) { Card.fetch(row.card_id)&.ok?(:read) } ? true : false
       end
 
       # Release the AR connection back to the pool across the RYW poll sleep so polling can't starve
@@ -189,6 +206,31 @@ module Api
       def render_invalid_request(error)
         render json: { error: "bad_request", reason: error.message, _meta: Atomspace::ReadClient::SAFE_META },
                status: 400
+      end
+
+      def require_user_principal!
+        sub = @current_mcp_payload && @current_mcp_payload["sub"]
+        unless sub.to_s.start_with?("user:")
+          return render json: { error: "principal_not_permitted" }, status: :forbidden
+        end
+
+        account = user_account_for(sub)
+        return if account && account.id == @current_mcp_account&.id
+
+        render json: { error: "principal_unresolved" }, status: :unauthorized
+      end
+
+      # A live, non-trashed card of type User, resolved from the token's own subject.
+      def user_account_for(sub)
+        name = sub.delete_prefix("user:").sub(/\+\*account\z/, "")
+        card = Card[name]
+        card if card && !card.trash && card.type_id == Card::UserID
+      end
+
+      def require_quarantine_delete_window!
+        return if ENV["ATOMSPACE_QUARANTINE_DELETE_ENABLED"] == "true"
+
+        render json: { error: "quarantine_delete_disabled" }, status: :forbidden
       end
 
       # Auth gates. Match the mcp_api render-and-halt idiom: a before_action that renders sets
