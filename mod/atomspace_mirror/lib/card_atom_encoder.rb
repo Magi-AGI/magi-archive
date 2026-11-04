@@ -38,7 +38,7 @@ module CardAtomEncoder
   # name); the encoder accepts either the integer index or the name string.
   TRACKED_FIELDS = %w[name type_id db_content trash left_id right_id].freeze
 
-  def encode(action, pre_state: {}, auth:, request_context: {})
+  def encode(action, pre_state: {}, auth:, request_context: {}, card: nil)
     # auth is MANDATORY (Source-5 dual-actor audit data): callers must pass the Card::Auth.serialize
     # snapshot, or { current_id: nil, as_id: nil } when genuinely unavailable. Omission must be
     # explicit, never a silent null -- so no default, and the keys must be present.
@@ -47,7 +47,7 @@ module CardAtomEncoder
     end
     return [] if action.draft
 
-    card = action.card
+    card ||= action.card
     [decko_card(card),
      *decko_references(card),
      decko_provenance(action, card, pre_state || {}, auth || {}, request_context || {})]

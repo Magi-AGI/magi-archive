@@ -32,5 +32,11 @@ event :write_to_mirror_outbox, :integrate_with_delay, on: %i[create update delet
   next unless ::MirrorOutboxWriter.enabled?
 
   action = current_action
-  ::MirrorOutboxWriter.write(action, auth: ::Card::Auth.serialize) if action
+  next unless action
+
+  # Card::Action#card is a cached Card.fetch. Under a real shared cache it can return the copy from before
+  # this save, so an update's atom kept the old content and a delete's kept Trash=false, while the same
+  # event's provenance was right. The act has committed by now, so Postgres holds the state it produced.
+  saved = ::Card.uncached { ::Card.where(id: action.card_id).first }
+  ::MirrorOutboxWriter.write(action, auth: ::Card::Auth.serialize, card: saved)
 end

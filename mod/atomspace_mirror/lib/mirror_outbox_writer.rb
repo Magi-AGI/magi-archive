@@ -37,13 +37,15 @@ module MirrorOutboxWriter
     ENV["ATOMSPACE_MIRRORING_ENABLED"].to_s.strip.casecmp?("true")
   end
 
-  def write(action, pre_state: nil, auth:, request_context: {})
+  # card: the state to encode, read fresh by the hook. Callers without one (bootstrap, reconcile) use action.card.
+  def write(action, pre_state: nil, auth:, request_context: {}, card: nil)
     # Validate the auth contract LOUDLY here -- an L2b wiring bug must not be swallowed into a
     # 'failed' row by the encode rescue below (that rescue is only for genuine encode/data corruption).
     unless auth.is_a?(Hash) && auth.key?(:current_id) && auth.key?(:as_id)
       raise ArgumentError, "auth: must be a Hash with :current_id and :as_id keys"
     end
-    return if mirror_own_card?(action.card)
+    card ||= action.card
+    return if mirror_own_card?(card)
     return if action.draft
 
     # Derive pre_state + encode OUTSIDE the state lock (keeps the singleton lock short). BOTH run in
@@ -55,7 +57,8 @@ module MirrorOutboxWriter
     encode_error = nil
     begin
       effective_pre_state = pre_state || derive_pre_state(action)
-      atoms = CardAtomEncoder.encode(action, pre_state: effective_pre_state, auth: auth, request_context: request_context)
+      atoms = CardAtomEncoder.encode(action, pre_state: effective_pre_state, auth: auth, request_context: request_context,
+                                             card: card)
     rescue CardAtomEncoder::EncodingError => e
       encode_error = e
     end
