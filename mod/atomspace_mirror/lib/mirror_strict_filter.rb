@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "mirror_read_rule_resolver"
+
 # The locked STRICT dataset filter for a prod-derived dev database. It is the UNION of two predicates:
 #
 #   A. Administrator documentation: everything under the Administrator root by left-id ancestry, except
@@ -36,6 +38,9 @@
 # S-5 (protected cards): codenamed system cards are never deleted, because the deck cannot run without
 # them. A codenamed card the policy says to EXCLUDE is a protected-card/privacy conflict: it is
 # reported with its codename and apply! refuses unless every such id is acknowledged explicitly.
+#
+# Every effective rule and rule verdict is resolved from a cold, private cache (MirrorReadRuleResolver). A warm scan can
+# resolve the open deck default for a card whose real rule is locked, which here would retain a card the policy excludes.
 #
 # The manifest is read-only and reports ids, codenames and counts only -- never card content.
 #
@@ -296,12 +301,14 @@ module MirrorStrictFilter
     self_rules = self_read_rule_ids(conn)
     state = { locked: [], stale_ids: [], null_ids: [], absent_rule_ids: [], rule_errors: {},
               card_errors: {}, verdicts: {}, disagreement_ids: [], trashed_divergence_ids: [] }
-    Card::Auth.as_bot do
-      # Cached rule ids are resolved too: a cached id with no rule card is an unresolved
-      # classification and must block apply!, even when the effective rule is fine.
-      cached.values.map(&:first).compact.uniq.each { |rule_id| rule_verdict(rule_id, state) }
-      cached.each do |card_id, (rule_id, rule_class, trash)|
-        classify_card(card_id, rule_id, rule_class, trash, self_rules[card_id], state)
+    MirrorReadRuleResolver.isolated do
+      Card::Auth.as_bot do
+        # Cached rule ids are resolved too: a cached id with no rule card is an unresolved
+        # classification and must block apply!, even when the effective rule is fine.
+        cached.values.map(&:first).compact.uniq.each { |rule_id| rule_verdict(rule_id, state) }
+        cached.each do |card_id, (rule_id, rule_class, trash)|
+          classify_card(card_id, rule_id, rule_class, trash, self_rules[card_id], state)
+        end
       end
     end
     state
@@ -324,11 +331,10 @@ module MirrorStrictFilter
 
   def classify_card(card_id, cached_rule_id, cached_rule_class, trashed, self_rule_id, state)
     state[:null_ids] << card_id if cached_rule_id.nil?
-    card = Card.fetch(card_id, look_in_trash: true)
+    card = Card.where(id: card_id).take
     return state[:card_errors][card_id] = "NotFound" unless card
 
-    card.include_set_modules
-    effective_id, effective_class = card.permission_rule_id_and_class(:read)
+    effective_id, effective_class = MirrorReadRuleResolver.read_rule(card)
     record_cache_divergence(card_id, [cached_rule_id, cached_rule_class],
                             [effective_id, effective_class], trashed, state)
     return state[:card_errors][card_id] = "NoEffectiveReadRule" if effective_id.nil?
@@ -387,6 +393,7 @@ module MirrorStrictFilter
   # harmless rule.
   def rule_principals(rule_id)
     rule = begin
+      MirrorReadRuleResolver.cold!
       Card.fetch(rule_id, look_in_trash: true)
     rescue StandardError => e
       return [:error, e.class.name]

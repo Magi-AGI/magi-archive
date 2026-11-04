@@ -505,18 +505,35 @@ RSpec.describe "AtomSpace L9 Magi security", type: :request do
         expect(Card::Auth.as("Anonymous") { Card.fetch(card.id).ok?(:read) }).to be(false)
       end
 
-      it "the audit is not clean while the columns are right but a fetch still returns the stale rule" do
+      # What stays stale across processes is the shared store's copy, so this runs with a real one. A temporary cache
+      # serves nobody else, and the audit no longer reads it (read_rule_determinism_spec.rb).
+      it "the audit is not clean while the columns are right but the shared store still serves the stale rule" do
         raw = Card.find(card.id)
         raw.include_set_modules
         real = Card::Auth.as_bot { raw.permission_rule_id_and_class(:read) }
-        Card.where(id: card.id).update_all(read_rule_id: real.first, read_rule_class: real.last)
-        expect(Card.fetch(card.id).read_rule_id).to eq(open_rule)
 
-        report = MirrorAclAudit.audit(scope: scope)
-        expect(report.mismatched_ids).to eq([])
-        expect(report.stale_fetch_ids).to eq([card.id])
-        expect(report).not_to be_clean
-        expect(report.to_h_report[:stale_fetch]).to eq(1)
+        saved = %i[@shared_cache @cache_by_class].to_h { |iv| [iv, Card::Cache.instance_variable_get(iv)] }
+        saved_cardio = Cardio.instance_variable_get(:@cache)
+        store = ActiveSupport::Cache::MemoryStore.new
+        begin
+          Cardio.instance_variable_set(:@cache, store)
+          Card::Cache.instance_variable_set(:@shared_cache, store)
+          Card::Cache.instance_variable_set(:@cache_by_class, {})
+
+          Card.fetch(card.id, skip_modules: true)
+          Card.where(id: card.id).update_all(read_rule_id: real.first, read_rule_class: real.last)
+          Card::Cache.reset_temp
+          expect(Card.fetch(card.id).read_rule_id).to eq(open_rule)
+
+          report = MirrorAclAudit.audit(scope: scope)
+          expect(report.mismatched_ids).to eq([])
+          expect(report.stale_fetch_ids).to eq([card.id])
+          expect(report).not_to be_clean
+          expect(report.to_h_report[:stale_fetch]).to eq(1)
+        ensure
+          saved.each { |iv, value| Card::Cache.instance_variable_set(iv, value) }
+          Cardio.instance_variable_set(:@cache, saved_cardio)
+        end
       end
 
       it "repairing what the audit found leaves it clean and Anonymous refused" do

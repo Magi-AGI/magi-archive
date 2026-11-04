@@ -83,7 +83,9 @@ RAILS_ENV=production bundle exec rake mirror_refresh:acl_audit           # read-
 RAILS_ENV=production REPAIR=1 bundle exec rake mirror_refresh:acl_audit  # repairs mismatches, re-audits
 ```
 
-It exits non-zero unless clean, and repair creates no card actions. The audit also compares the rule on the cached copy, because every read goes through `Card.fetch`, and repair expires the card. Columns alone can look clean while the old rule is still enforced. **Grant no AtomSpace scope until it is clean.** While grants are active, **re-run it after any `+*read` rule save**: the `permission_propagation` mod's `*right` branch does not repair descendants. If `*right`-governed cards are wrong, hard stop: no grant beyond the owner's admin principal until repaired.
+Each row resolves from a cold, private cache, so the verdict depends on the rows and not on what the process read first. A full scan takes longer for it: budget minutes, not seconds. The rake task runs with the shared cache off, so its report says `shared_cache_checked: false`. To check the copies a live deck serves, call `MirrorAclAudit.audit` from a runner that has the shared cache on.
+
+It exits non-zero unless clean, and repair creates no card actions. The audit also compares the rule on the shared store's copy when there is a store to read, because every read goes through `Card.fetch`, and repair expires the card. Columns alone can look clean while the old rule is still enforced. **Grant no AtomSpace scope until it is clean.** While grants are active, **re-run it after any `+*read` rule save**: the `permission_propagation` mod's `*right` branch does not repair descendants. If `*right`-governed cards are wrong, hard stop: no grant beyond the owner's admin principal until repaired.
 
 ## Host trust boundary
 
