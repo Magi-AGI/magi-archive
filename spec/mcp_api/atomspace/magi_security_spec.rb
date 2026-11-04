@@ -438,6 +438,32 @@ RSpec.describe "AtomSpace L9 Magi security", type: :request do
     end
   end
 
+  describe "503 reason reports the real failure" do
+    let(:path) { "/api/mcp/atomspace_mirror/space_stats" }
+
+    it "says read_client_unbound only when the client really is unbound" do
+      allow(Atomspace::ReadClient).to receive(:for).and_raise(Atomspace::ServiceUnavailable, "atomspace read client unbound")
+      get path, headers: auth
+      expect(response).to have_http_status(:service_unavailable)
+      expect(body).to include("reason" => "read_client_unbound")
+      expect(body).not_to have_key("cause")
+    end
+
+    it "names a read deadline by its class, without its message" do
+      allow(Atomspace::ReadClient).to receive(:for) do
+        begin
+          raise Timeout::Error, "secret detail"
+        rescue Timeout::Error => e
+          raise Atomspace::ServiceUnavailable, "sidecar unreachable: #{e.class}: #{e.message}"
+        end
+      end
+      get path, headers: auth
+      expect(response).to have_http_status(:service_unavailable)
+      expect(body).to include("reason" => "sidecar_unavailable", "cause" => "Timeout::Error")
+      expect(response.body).not_to include("secret detail")
+    end
+  end
+
   describe "T20 ACL-cache audit" do
     before { require Rails.root.join("mod/atomspace_mirror/lib/mirror_acl_audit").to_s }
 
@@ -456,6 +482,49 @@ RSpec.describe "AtomSpace L9 Magi security", type: :request do
 
       expect { MirrorAclAudit.repair!(report.mismatched_ids) }.not_to(change { Card::Action.count })
       expect(MirrorAclAudit.audit(scope: scope)).to be_clean
+    end
+
+    # Dev evidence: REPAIR=1 left 34/34 columns right, 0/34 fetches right, and anonymous still 200
+    # (logs/impl5/acl_repair.log). Reads go through Card.fetch, so that is what has to be right.
+    context "when the card cache holds the stale rule" do
+      let(:card) { restricted_card }
+      let(:scope) { Card.where(id: card.id) }
+      let(:open_rule) { Card.fetch("*all+*read").id }
+
+      before do
+        Card.where(id: card.id).update_all(read_rule_id: open_rule, read_rule_class: "*all plus")
+        Card.fetch(card.id).expire
+        expect(Card.fetch(card.id).read_rule_id).to eq(open_rule)
+        expect(Card::Auth.as("Anonymous") { Card.fetch(card.id).ok?(:read) }).to be(true)
+      end
+
+      it "repair! also fixes what Card.fetch returns, so Anonymous is really refused" do
+        MirrorAclAudit.repair!([card.id])
+        expect(Card.where(id: card.id).pick(:read_rule_id)).not_to eq(open_rule)
+        expect(Card.fetch(card.id).read_rule_id).not_to eq(open_rule)
+        expect(Card::Auth.as("Anonymous") { Card.fetch(card.id).ok?(:read) }).to be(false)
+      end
+
+      it "the audit is not clean while the columns are right but a fetch still returns the stale rule" do
+        raw = Card.find(card.id)
+        raw.include_set_modules
+        real = Card::Auth.as_bot { raw.permission_rule_id_and_class(:read) }
+        Card.where(id: card.id).update_all(read_rule_id: real.first, read_rule_class: real.last)
+        expect(Card.fetch(card.id).read_rule_id).to eq(open_rule)
+
+        report = MirrorAclAudit.audit(scope: scope)
+        expect(report.mismatched_ids).to eq([])
+        expect(report.stale_fetch_ids).to eq([card.id])
+        expect(report).not_to be_clean
+        expect(report.to_h_report[:stale_fetch]).to eq(1)
+      end
+
+      it "repairing what the audit found leaves it clean and Anonymous refused" do
+        report = MirrorAclAudit.audit(scope: scope)
+        MirrorAclAudit.repair!(report.repair_ids)
+        expect(MirrorAclAudit.audit(scope: scope)).to be_clean
+        expect(Card::Auth.as("Anonymous") { Card.fetch(card.id).ok?(:read) }).to be(false)
+      end
     end
   end
 

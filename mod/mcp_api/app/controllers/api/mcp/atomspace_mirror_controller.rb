@@ -200,17 +200,22 @@ module Api
         false
       end
 
-      def render_read_client_unavailable(_error)
-        render_unavailable("read_client_unbound")
+      # Only an actually unbound client says so. A read deadline or a dead socket reported as "unbound" sent a real
+      # diagnosis the wrong way on the dev host. The cause's class name is safe to return; its message is not returned.
+      def render_read_client_unavailable(error)
+        return render_unavailable("read_client_unbound") if error.message.include?("unbound")
+
+        render_unavailable("sidecar_unavailable", cause: error.cause&.class&.name)
       end
 
       def render_consistency_unavailable(_error)
         render_unavailable("read_consistency_not_wired")
       end
 
-      def render_unavailable(reason)
-        Atomspace::Observability.alert(signal_class: 3, payload: { signal: reason })
-        render json: { error: "atomspace_unavailable", reason: reason, _meta: Atomspace::ReadClient::SAFE_META },
+      def render_unavailable(reason, cause: nil)
+        Atomspace::Observability.alert(signal_class: 3, payload: { signal: reason, cause: cause }.compact)
+        render json: { error: "atomspace_unavailable", reason: reason, cause: cause,
+                       _meta: Atomspace::ReadClient::SAFE_META }.compact,
                status: 503
       end
 

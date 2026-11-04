@@ -52,8 +52,8 @@ namespace :mirror_refresh do
     require Rails.root.join("mod/atomspace_mirror/lib/mirror_acl_audit").to_s
     result = MirrorAclAudit.audit
     puts result.to_h_report.to_json
-    if ENV["REPAIR"] == "1" && result.mismatched_ids.any?
-      MirrorAclAudit.repair!(result.mismatched_ids)
+    if ENV["REPAIR"] == "1" && result.repair_ids.any?
+      MirrorAclAudit.repair!(result.repair_ids)
       result = MirrorAclAudit.audit
       puts result.to_h_report.to_json
     end
