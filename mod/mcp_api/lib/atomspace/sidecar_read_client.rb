@@ -5,6 +5,7 @@ require "json"
 require_relative "read_client"
 require_relative "atom"
 require_relative "errors"
+require_relative "../../../atomspace_mirror/lib/sidecar_unix_http"
 
 module Atomspace
   # Production read client (Lane C C2): talks to the sidecar's privileged `POST /read` over the UNIX
@@ -16,10 +17,18 @@ module Atomspace
   # contract is testable without a live socket.
   class SidecarReadClient < ReadClient
     SOCKET_ERRORS = [Errno::ENOENT, Errno::ECONNREFUSED, Errno::EPIPE, Errno::ECONNRESET,
-                     Errno::ETIMEDOUT, IOError, SocketError, SystemCallError].freeze
+                     Errno::ETIMEDOUT, IOError, SocketError, SystemCallError, Timeout::Error].freeze
+
+    # One whole request, connect to EOF. The operator can tune it once R8 has measured real reads.
+    DEFAULT_TIMEOUT_SECONDS = 10
 
     class << self
       attr_accessor :socket_path, :transport
+      attr_writer :timeout_seconds
+
+      def timeout_seconds
+        @timeout_seconds || ENV.fetch("SIDECAR_READ_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS).to_f
+      end
 
       # Class-level watermark meta (the ReadClient contract calls this on the bound class).
       def watermark_meta
@@ -48,19 +57,13 @@ module Atomspace
       private
 
       # Minimal HTTP/1.0 over the UNIX socket (the sidecar serves wsgiref on AF_UNIX; HTTP/1.0 + close
-      # => read to EOF). Returns [status_int, parsed_body_or_nil].
+      # => read to EOF). Returns [status_int, parsed_body_or_nil]. A stalled sidecar raises
+      # DeadlineExceeded, a Timeout::Error, so callers map it to ServiceUnavailable via SOCKET_ERRORS.
       def unix_request(verb, path, body)
-        sock = UNIXSocket.new(default_socket_path)
         payload = body.nil? ? "" : JSON.generate(body)
-        sock.write("#{verb.to_s.upcase} #{path} HTTP/1.0\r\n" \
-                   "Host: localhost\r\nContent-Type: application/json\r\n" \
-                   "Content-Length: #{payload.bytesize}\r\nConnection: close\r\n\r\n#{payload}")
-        raw = sock.read.to_s
-        head, _, json_body = raw.partition("\r\n\r\n")
-        status = head[%r{\AHTTP/\d\.\d (\d+)}, 1].to_i
+        status, json_body = SidecarUnixHttp.exchange(default_socket_path, verb, path, payload,
+                                                     timeout: timeout_seconds)
         [status, parse(json_body)]
-      ensure
-        sock&.close
       end
 
       def parse(raw)
