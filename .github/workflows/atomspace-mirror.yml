@@ -27,4 +27,5 @@ jobs:
           spec/atomspace_mirror/engine_load_chain_spec.rb spec/atomspace_mirror/mirror_drain_validator_spec.rb
           spec/atomspace_mirror/mirror_outbox_writer_spec.rb spec/atomspace_mirror/mirror_spec.rb
           spec/atomspace_mirror/reconcile_runner_spec.rb spec/atomspace_mirror/reconciler_spec.rb
-          spec/atomspace_mirror/sidecar_client_spec.rb --format progress
+          spec/atomspace_mirror/sidecar_client_spec.rb spec/atomspace_mirror/sidecar_unix_http_spec.rb
+          spec/mcp_api/atomspace/sidecar_read_client_deadline_spec.rb --format progress
