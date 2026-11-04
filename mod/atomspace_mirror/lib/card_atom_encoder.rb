@@ -9,7 +9,7 @@ require "time" # Time#iso8601 (stdlib; autoloaded under Decko/ActiveSupport but 
 #
 # Output wire format is FROZEN in Card 17161 (L1 "Slice 2 outbox payload wire format", 2026-06-21);
 # atom shapes per Canonical Encodings. V1 only -- Content is the raw db_content string, NO cardtype
-# dispatch (Section 7).
+# dispatch (Section 7), except on a credential-bearing card, where it is the Redacted sentinel symbol.
 #
 # Input contract (verified against Decko card-1.110.0 on dev 2026-06-15):
 #   action          : Card::Action -- #id, #action_type (:create|:update|:delete), #draft,
@@ -37,6 +37,26 @@ module CardAtomEncoder
   # Decko card_changes.field is an integer index into this list (Card::Change#field maps it to the
   # name); the encoder accepts either the integer index or the name string.
   TRACKED_FIELDS = %w[name type_id db_content trash left_id right_id].freeze
+
+  # Right parts that hold credential material, by codename, so a renamed card still counts. On the data this has run against only
+  # password, salt, api_key and secret_key have a codename. The others match once one exists; until then the containers below catch
+  # them. secret_key is *recaptcha settings+secret key, which is readable by default and which no name-based sanitizer pattern catches.
+  CREDENTIAL_CODENAMES = %w[password salt api_key token reset_token key_hash metadata secret_hash secret_key].freeze
+
+  # Everything under these holds client secrets or key hashes, whatever its right part is called: see CARD_PREFIX in the gem's
+  # oauth/client_cards.rb and CONTAINER_NAME in mcp_api's mcp/api_key_manager.rb. Neither has a codename on the data this has run
+  # against, so today the name is what matches. Names, not keys: Decko derives the keys (mcp_o_auth_client, mcp_api_key).
+  CREDENTIAL_CONTAINERS = ["MCP OAuth Clients", "MCP API Keys"].freeze
+  CREDENTIAL_CONTAINER_CODENAMES = %w[mcp_oauth_clients mcp_api_keys].freeze
+
+  # Does this card hold credential material? If so its value never leaves this encoder: Content and the db_content change carry the
+  # Redacted sentinel, and the atom keeps its shape, because DriftReconciler hashes the Postgres side with this same encoder.
+  # Pure: reads the card's identity and the process's codename table, never db_content, so no message can ever carry the value.
+  def credential_bearing?(card)
+    codename_in?(card.right_id, CREDENTIAL_CODENAMES) ||
+      codename_in?(card.left_id, CREDENTIAL_CONTAINER_CODENAMES) ||
+      under_credential_container?(card.name)
+  end
 
   def encode(action, pre_state: {}, auth:, request_context: {}, card: nil)
     # auth is MANDATORY (Source-5 dual-actor audit data): callers must pass the Card::Auth.serialize
@@ -99,7 +119,7 @@ module CardAtomEncoder
       ["TypeName",  card.type_name],
       ["LeftId",    card.left_id || sym("NoLeft")],
       ["RightId",   card.right_id || sym("NoRight")],
-      ["Content",   card.db_content],
+      ["Content",   credential_bearing?(card) ? sym("Redacted") : card.db_content],
       ["Trash",     card.trash ? true : false],
       ["CreatedAt", iso(card.created_at)],
       ["UpdatedAt", iso(card.updated_at)],
@@ -141,7 +161,7 @@ module CardAtomEncoder
       ["acted_at",             iso(action.act.acted_at)],
       ["ip_address",           sym("NoIP")],                # D-5: never store the editor's IP
       ["stage",                STAGE],
-      ["changes",              changes(action, pre_state)],
+      ["changes",              changes(action, pre_state, card)],
       ["agent_session_id",     ctx[:agent_session_id]],
       ["agent_kind",           ctx[:agent_kind] ? sym(ctx[:agent_kind].to_s) : nil],
       ["origin_system",        ctx[:origin_system] ? sym(ctx[:origin_system].to_s) : nil],
@@ -180,14 +200,32 @@ module CardAtomEncoder
     ]
   end
 
-  def changes(action, pre_state)
+  def changes(action, pre_state, card)
+    credential = credential_bearing?(card)
     Array(action.card_changes).map do |ch|
       field = field_name(ch.field)
-      { "field" => field, "old" => pre_lookup(pre_state, field), "new" => ch.value }
+      if credential && field == "db_content"
+        { "field" => field, "old" => sym("Redacted"), "new" => sym("Redacted") }
+      else
+        { "field" => field, "old" => pre_lookup(pre_state, field), "new" => ch.value }
+      end
     end
   end
 
   # --- helpers ---
+
+  # Card is absent only in the standalone specs, where the card is a double. A real card always comes with the codename table.
+  def codename_in?(id, codenames)
+    return false if id.nil? || !defined?(::Card::Codename)
+
+    codenames.include?(::Card::Codename[id].to_s)
+  end
+
+  # A descendant, not the container itself, and only at the top of the name: "Notes+MCP API Keys+x" is not under it.
+  def under_credential_container?(name)
+    top, rest = name.to_s.split("+", 2)
+    !rest.nil? && CREDENTIAL_CONTAINERS.any? { |container| container.casecmp?(top) }
+  end
 
   # Card::Change#field may be the name string or the raw integer index -- normalize to a name and
   # validate it against the locked TRACKED_FIELDS set. A corrupt/unknown field (out-of-range index
