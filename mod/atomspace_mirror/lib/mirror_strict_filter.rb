@@ -3,36 +3,101 @@
 # The locked STRICT dataset filter for a prod-derived dev database. It is the UNION of two predicates:
 #
 #   A. Administrator documentation: everything under the Administrator root by left-id ancestry, except
-#      the role's authorization scaffolding (names whose parts after the root are all *-settings, such as
-#      Administrator+*members and Administrator+*self+*read).
-#   B. READ-locked cards: the card's effective read rule resolves to a non-empty set of principals that is
-#      entirely within {Administrator, Nemquae}. A rule shared with anyone else does not match.
+#      the role's authorization scaffolding (an enumerated set of ACL/role settings, such as
+#      Administrator+*members and Administrator+*self+*read; see SCAFFOLD_SETTING_CODENAMES).
+#   B. READ-locked cards: the card's read rule resolves to a non-empty set of principals that is
+#      entirely within {administrator, nemquae} by Card::Name#key. A rule shared with anyone else
+#      does not match. "The card's read rule" is the UNION of three independent resolutions -- the
+#      effective rule Decko computes now, the denormalized cards.read_rule_id cache, and the card's
+#      own +*self+*read rule -- because no single one survives every state (see read_classification).
 #
-# Filtering uses the denormalized effective read rule, never write rules or name/content search. An
-# Administrator-value filter alone misses the doc tree, whose own rule points at another principal.
+# Filtering uses the effective read rule that Decko itself resolves, never write rules and never
+# name/content search. An Administrator-value filter alone misses the doc tree, whose own rule points at
+# another principal.
 #
-# The manifest is read-only and reports ids and counts only. Dependents (cards whose left or right part is
-# excluded) cannot survive their parent, so they are excluded too and counted separately. A rule that cannot
-# be resolved blocks apply, because guessing could keep a private card. Codenamed system cards are never
-# excluded, because the deck cannot run without them; they are reported so a human can look at them.
+# S-1/S-2 (selection fidelity): the denormalized cards.read_rule_id column is NOT the sole filter. A
+# restore can leave it stale, and Decko's own repair only fixes NULLs, so classifying the cached value
+# alone would retain a private card. Conversely a trashed card's EFFECTIVE rule collapses to *all+*read
+# even while its own +*self+*read still names Administrator only, so classifying the effective value
+# alone would LOSE a trashed private card. Selection is therefore the union of the effective verdict,
+# the cached verdict and the card's own self-rule verdict; the disagreements between them are reported
+# (stale_read_cache_ids, verdict_disagreement_ids) and the cache disagreement is refused by apply!
+# (assert_audited_read_cache!). NULL-cached rows are classified like any other row and counted
+# explicitly instead of being dropped from the candidate set.
 #
-# apply! deletes rows, so it demands the live database name as confirmation and refuses a DB with mirror
-# tables or an active gate. Run it only on a disposable or staged copy. Attachment blobs live outside the
-# database: the manifest lists their cards for separate removal. Credentials are handled separately.
+# S-3 (unresolved refusal): rule_principals distinguishes "no rule card" (:absent) from "resolution
+# raised" (:error) and never collapses either into a harmless empty rule. manifest reports both, and
+# both block apply!.
+#
+# S-4 (closure): dependents are cards that reference an excluded card through left_id, right_id,
+# type_id or read_rule_id; they cannot survive their referent. Whatever the closure cannot take (the
+# root, enumerated scaffolding, codenamed system cards) is checked for dangling references, and a plan
+# that would leave one is refused.
+#
+# S-5 (protected cards): codenamed system cards are never deleted, because the deck cannot run without
+# them. A codenamed card the policy says to EXCLUDE is a protected-card/privacy conflict: it is
+# reported with its codename and apply! refuses unless every such id is acknowledged explicitly.
+#
+# The manifest is read-only and reports ids, codenames and counts only -- never card content.
+#
+# apply! deletes rows, so it demands the live database name as confirmation and refuses a DB with
+# mirror tables or an active gate. Run it only on a disposable or staged copy. Attachment blobs live
+# outside the database: the manifest lists their cards for separate removal. Credentials (+*account and
+# its email/password/salt/api-key fields) are NOT retained as scaffolding here; they are sanitized by
+# the separate credential pass.
 module MirrorStrictFilter
   ROOT_NAME = "Administrator"
-  LOCK_PRINCIPALS = %w[Administrator Nemquae].freeze
+
+  # Key-normalized (Card::Name#key) lock principals. Decko resolves +*read by key, so a lower-case
+  # [[administrator]] names the same principal and must not read as a third party.
+  LOCK_PRINCIPAL_KEYS = %w[administrator nemquae].freeze
+
+  # Policy (A) authorization scaffolding, enumerated by Decko CODENAME rather than "any *-name".
+  # Codenames are the stable identity: cards.key is singularized by Decko (the `members` setting has
+  # key `*member`, `type_plus_right` has key `*type_plu_right`), so matching on key is both unstable
+  # and, for an unknown deck, silently wrong. Set anchors, permission settings and role/membership
+  # identity only. Deliberately absent: `account` (credentials are sanitized separately) and every
+  # documentation/presentation setting (help, structure, default, guide, title...).
+  SCAFFOLD_SETTING_CODENAMES = %w[
+    self right type type_plus_right all all_plus star rstar
+    read create update delete
+    members roles
+  ].freeze
+
+  # ACL scaffolding is structural, not prose. A documentation-typed card under a *-suffix chain is
+  # documentation, so it stays excluded.
+  SCAFFOLD_TYPE_KEYS = %w[list pointer set].freeze
 
   class Refused < StandardError; end
 
   Manifest = Struct.new(:ancestry_ids, :read_locked_ids, :dependent_ids, :excluded_ids, :scaffold_ids,
-                        :unresolved_rule_ids, :attachment_card_ids, :cascade, :protected_system_ids,
+                        :unresolved_rule_ids, :unresolved_rule_errors, :unresolved_card_ids,
+                        :stale_read_cache_ids, :null_read_cache_ids, :verdict_disagreement_ids,
+                        :trashed_cache_divergence_ids,
+                        :dangling_type_ids, :dangling_read_rule_ids, :dangling_part_ids,
+                        :scaffold_conflict_ids,
+                        :attachment_card_ids, :cascade, :protected_system_ids,
+                        :protected_system_codenames,
                         keyword_init: true) do
+    def unresolved? = unresolved_rule_ids.any? || unresolved_rule_errors.any? || unresolved_card_ids.any?
+    def dangling? = dangling_type_ids.any? || dangling_read_rule_ids.any? || dangling_part_ids.any?
+
     def to_h_report
       { ancestry: ancestry_ids.size, read_locked: read_locked_ids.size, dependents: dependent_ids.size,
         excluded_total: excluded_ids.size, trashed_excluded: Card.where(id: excluded_ids, trash: true).count,
-        scaffold_kept: scaffold_ids.size, unresolved_rule_ids: unresolved_rule_ids,
+        scaffold_kept: scaffold_ids.size,
+        unresolved_rule_ids: unresolved_rule_ids, unresolved_rule_errors: unresolved_rule_errors,
+        unresolved_card_ids: unresolved_card_ids,
+        stale_read_cache: stale_read_cache_ids.size, stale_read_cache_ids: stale_read_cache_ids,
+        null_read_cache: null_read_cache_ids.size, null_read_cache_ids: null_read_cache_ids,
+        verdict_disagreement: verdict_disagreement_ids.size,
+        verdict_disagreement_ids: verdict_disagreement_ids,
+        trashed_cache_divergence: trashed_cache_divergence_ids.size,
+        trashed_cache_divergence_ids: trashed_cache_divergence_ids,
+        dangling_type_ids: dangling_type_ids, dangling_read_rule_ids: dangling_read_rule_ids,
+        dangling_part_ids: dangling_part_ids, scaffold_conflict_ids: scaffold_conflict_ids,
         protected_system_ids: protected_system_ids,
+        protected_system_codenames: protected_system_codenames,
         attachment_card_ids: attachment_card_ids, cascade: cascade, excluded_ids: excluded_ids }
     end
   end
@@ -43,29 +108,45 @@ module MirrorStrictFilter
     root = Card.where(key: ROOT_NAME.downcase, trash: false).pick(:id) ||
            raise(Refused, "no #{ROOT_NAME} root card found")
     ancestry, scaffold = ancestry_split(root, conn)
-    locked, unresolved = read_locked(conn)
-    locked -= scaffold
-    locked.delete(root)
+    read = read_classification(conn)
+    locked = read[:locked] - scaffold - [root]
     candidates = (ancestry + locked).uniq
     protected_ids = codenamed(candidates)
     base = candidates - protected_ids
-    dependents = dependents_of(base, conn, keep: scaffold + [root])
+    keep = (scaffold + [root] + protected_ids).uniq
+    dependents = dependents_of(base, conn, keep: keep)
     protected_dependents = codenamed(dependents)
     dependents -= protected_dependents
     excluded = (base + dependents).uniq.sort
-    Manifest.new(ancestry_ids: ancestry.sort, read_locked_ids: locked.sort, dependent_ids: dependents.sort,
-                 excluded_ids: excluded, scaffold_ids: scaffold.sort, unresolved_rule_ids: unresolved.sort,
-                 attachment_card_ids: attachment_cards(excluded), cascade: cascade_counts(excluded, conn),
-                 protected_system_ids: (protected_ids + protected_dependents).sort)
+    all_protected = (protected_ids + protected_dependents).sort
+    Manifest.new(
+      ancestry_ids: ancestry.sort, read_locked_ids: locked.sort, dependent_ids: dependents.sort,
+      excluded_ids: excluded, scaffold_ids: scaffold.sort,
+      unresolved_rule_ids: read[:absent_rule_ids].sort, unresolved_rule_errors: read[:rule_errors],
+      unresolved_card_ids: read[:card_errors].keys.sort,
+      stale_read_cache_ids: read[:stale_ids].sort, null_read_cache_ids: read[:null_ids].sort,
+      verdict_disagreement_ids: read[:disagreement_ids].uniq.sort,
+      trashed_cache_divergence_ids: read[:trashed_divergence_ids].uniq.sort,
+      dangling_type_ids: dangling(excluded, conn, "type_id"),
+      dangling_read_rule_ids: dangling(excluded, conn, "read_rule_id"),
+      dangling_part_ids: dangling_parts(excluded, conn),
+      scaffold_conflict_ids: scaffold_conflicts(scaffold, root, conn),
+      attachment_card_ids: attachment_cards(excluded), cascade: cascade_counts(excluded, conn),
+      protected_system_ids: all_protected,
+      protected_system_codenames: codename_map(all_protected)
+    )
   end
 
-  def apply!(confirm_db:, conn: ActiveRecord::Base.connection)
+  def apply!(confirm_db:, ack_protected: nil, conn: ActiveRecord::Base.connection)
     live = conn.current_database
     raise Refused, "confirmation #{confirm_db.inspect} does not match database #{live.inspect}" unless confirm_db == live
 
     MirrorRuntimeGuards.assert_refresh_precondition!(conn: conn)
     plan = manifest(conn: conn)
-    raise Refused, "unresolved read rules: #{plan.unresolved_rule_ids.join(',')}" if plan.unresolved_rule_ids.any?
+    refuse_unresolved!(plan)
+    assert_audited_read_cache!(plan: plan, conn: conn)
+    refuse_dangling!(plan)
+    refuse_unacknowledged_protected!(plan, ack_protected)
 
     ids = plan.excluded_ids
     conn.transaction do
@@ -88,6 +169,48 @@ module MirrorStrictFilter
     plan
   end
 
+  # S-1. The runner must repair the ACL cache over trashed AND untrashed rows BEFORE manifest/apply.
+  # This is the code-side half of that requirement: selection refuses to proceed while any cached
+  # read rule still disagrees with Decko's own resolution.
+  def assert_audited_read_cache!(plan: nil, conn: ActiveRecord::Base.connection)
+    plan ||= manifest(conn: conn)
+    return plan if plan.stale_read_cache_ids.empty?
+
+    raise Refused, "read-rule cache is not audited: #{plan.stale_read_cache_ids.size} cards disagree " \
+                   "with Decko's resolution (#{plan.stale_read_cache_ids.first(20).join(',')}); run " \
+                   "REPAIR=1 mirror_refresh:acl_audit over trash:[false,true] before selection"
+  end
+
+  def refuse_unresolved!(plan)
+    return unless plan.unresolved?
+
+    raise Refused, "unresolved read rules: absent=#{plan.unresolved_rule_ids.join(',')} " \
+                   "errors=#{plan.unresolved_rule_errors.inspect} " \
+                   "cards=#{plan.unresolved_card_ids.join(',')}"
+  end
+
+  def refuse_dangling!(plan)
+    raise Refused, "scaffolding conflict: #{plan.scaffold_conflict_ids.join(',')}" if plan.scaffold_conflict_ids.any?
+    return unless plan.dangling?
+
+    raise Refused, "dangling references would survive: type_id=#{plan.dangling_type_ids.join(',')} " \
+                   "read_rule_id=#{plan.dangling_read_rule_ids.join(',')} " \
+                   "parts=#{plan.dangling_part_ids.join(',')}"
+  end
+
+  # S-5. A codenamed card the policy says to exclude is a protected-card/privacy conflict, not a
+  # silent retention. Every id must be acknowledged by the operator before apply! will run.
+  def refuse_unacknowledged_protected!(plan, ack_protected)
+    return if plan.protected_system_ids.empty?
+
+    acked = Array(ack_protected).map(&:to_i).sort
+    return if acked == plan.protected_system_ids
+
+    raise Refused, "protected system cards match the exclusion policy and are retained: " \
+                   "#{plan.protected_system_codenames.inspect}; pass ack_protected with exactly " \
+                   "those ids to accept the retention"
+  end
+
   # Transitive left-id closure from the root, trash included, split into docs and role scaffolding.
   def ancestry_split(root, conn)
     rows = conn.select_rows(<<~SQL)
@@ -98,69 +221,226 @@ module MirrorStrictFilter
       ) SELECT id FROM tree
     SQL
     ids = rows.flatten.map(&:to_i)
-    scaffold = ids.select { |id| scaffold?(id, root) }
+    scaffold = ids.select { |id| scaffold?(id, root, conn) }
     [ids - scaffold, scaffold]
   end
 
-  # Every part after the root is a *-setting: this card is authorization structure, not documentation.
-  def scaffold?(id, root)
-    parts = []
-    current = Card.where(id: id).pick(:left_id, :right_id)
-    while current
-      left, right = current
-      parts << Card.where(id: right).pick(:key)
-      break if left == root
+  # S-6. Policy (A) retains authorization structure, not "anything with a *-name". Every part after the
+  # root must be one of the enumerated ACL/role settings BY CODENAME, AND the card itself must carry a
+  # structural ACL type. A documentation body that happens to sit under a *-suffix chain stays excluded,
+  # and an unrecognized or codename-less setting is NOT scaffolding -- scaffold is subtracted from the
+  # exclusion set, so anything this method accepts is RETAINED. It fails closed by design.
+  def scaffold?(id, root, conn = ActiveRecord::Base.connection)
+    return false unless SCAFFOLD_TYPE_KEYS.include?(type_key(id, conn))
 
-      current = left && Card.where(id: left).pick(:left_id, :right_id)
-    end
-    parts.compact.any? && parts.all? { |key| key.to_s.start_with?("*") }
+    parts = suffix_codenames(id, root, conn)
+    return false if parts.nil? || parts.empty?
+
+    parts.all? { |codename| SCAFFOLD_SETTING_CODENAMES.include?(codename.to_s) }
   end
 
-  def read_locked(conn)
-    rule_ids = conn.select_values("SELECT DISTINCT read_rule_id FROM cards WHERE read_rule_id IS NOT NULL").map(&:to_i)
-    matching = []
-    unresolved = []
+  # The right-part CODENAMES between the card and the root, root-exclusive. nil when the chain does not
+  # reach the root (a card that is not a descendant cannot be the root's scaffolding). A right part with
+  # no codename yields nil in the list, which scaffold? rejects: an unnamed setting is not enumerated
+  # authorization structure.
+  def suffix_codenames(id, root, conn)
+    parts = []
+    current = conn.select_rows("SELECT left_id, right_id FROM cards WHERE id = #{id.to_i}").first
+    seen = {}
+    while current
+      left, right = current.map { |v| v&.to_i }
+      return nil if left.nil? || seen[left]
+
+      seen[left] = true
+      parts << conn.select_value("SELECT codename FROM cards WHERE id = #{right.to_i}") if right
+      break if left == root.to_i
+
+      current = conn.select_rows("SELECT left_id, right_id FROM cards WHERE id = #{left}").first
+      return nil if current.nil?
+    end
+    parts
+  end
+
+  # Retained scaffolding whose own left parent is neither the root nor other scaffolding: a hole
+  # through which excluded data could be smuggled back in.
+  def scaffold_conflicts(scaffold, root, conn)
+    return [] if scaffold.empty?
+
+    allowed = scaffold + [root.to_i]
+    conn.select_rows("SELECT id, left_id FROM cards WHERE id IN (#{scaffold.join(',')})")
+        .reject { |_id, left| allowed.include?(left.to_i) }
+        .map { |id, _left| id.to_i }.sort
+  end
+
+  def type_key(id, conn)
+    conn.select_value("SELECT t.key FROM cards c JOIN cards t ON t.id = c.type_id WHERE c.id = #{id.to_i}")
+  end
+
+  # S-1/S-2/S-7. Classify by the card's read rule over every row in the database, including trash and
+  # including NULL-cached rows. No single resolution is sufficient on its own:
+  #
+  #   * effective  -- what Decko resolves right now. Authoritative for a live card, but a trashed card's
+  #                   effective rule collapses to the deck default (*all+*read), so it LOSES a trashed
+  #                   private card.
+  #   * cached     -- cards.read_rule_id/read_rule_class. Survives trashing, but a restore can leave it
+  #                   stale, so on its own it RETAINS a private card.
+  #   * self rule  -- the card's own +*self+*read. Survives both, absent for most cards.
+  #
+  # The verdict is the UNION: locked if ANY resolution says locked. That fails closed, which is the only
+  # direction policy permits. Where the resolutions disagree the card id is recorded in
+  # verdict_disagreement_ids and reported, never silently reconciled.
+  def read_classification(conn)
+    cached = conn.select_rows("SELECT id, read_rule_id, read_rule_class, trash FROM cards")
+                 .to_h { |id, rid, rcls, trash| [id.to_i, [rid&.to_i, rcls, trash]] }
+    self_rules = self_read_rule_ids(conn)
+    state = { locked: [], stale_ids: [], null_ids: [], absent_rule_ids: [], rule_errors: {},
+              card_errors: {}, verdicts: {}, disagreement_ids: [], trashed_divergence_ids: [] }
     Card::Auth.as_bot do
-      rule_ids.each do |rule_id|
-        principals = rule_principals(rule_id)
-        if principals.nil?
-          unresolved << rule_id
-        elsif principals.any? && (principals - LOCK_PRINCIPALS).empty?
-          matching << rule_id
-        end
+      # Cached rule ids are resolved too: a cached id with no rule card is an unresolved
+      # classification and must block apply!, even when the effective rule is fine.
+      cached.values.map(&:first).compact.uniq.each { |rule_id| rule_verdict(rule_id, state) }
+      cached.each do |card_id, (rule_id, rule_class, trash)|
+        classify_card(card_id, rule_id, rule_class, trash, self_rules[card_id], state)
       end
     end
-    ids = matching.empty? ? [] : conn.select_values("SELECT id FROM cards WHERE read_rule_id IN (#{matching.join(',')})")
-    [ids.map(&:to_i), unresolved]
+    state
   end
 
-  # nil means it could not be resolved. A card-less rule id must not read as an empty, harmless rule.
+  # card_id => the id of its own "<name>+*self+*read" rule card, by codename join, trash included.
+  def self_read_rule_ids(conn)
+    read_id = conn.select_value("SELECT id FROM cards WHERE codename = 'read'")
+    self_id = conn.select_value("SELECT id FROM cards WHERE codename = 'self'")
+    return {} if read_id.nil? || self_id.nil?
+
+    conn.select_rows(<<~SQL).to_h { |card_id, rule_id| [card_id.to_i, rule_id.to_i] }
+      SELECT anchor.left_id, rule.id
+      FROM cards rule
+      JOIN cards anchor ON anchor.id = rule.left_id
+      WHERE rule.right_id = #{read_id.to_i} AND anchor.right_id = #{self_id.to_i}
+        AND anchor.left_id IS NOT NULL
+    SQL
+  end
+
+  def classify_card(card_id, cached_rule_id, cached_rule_class, trashed, self_rule_id, state)
+    state[:null_ids] << card_id if cached_rule_id.nil?
+    card = Card.fetch(card_id, look_in_trash: true)
+    return state[:card_errors][card_id] = "NotFound" unless card
+
+    card.include_set_modules
+    effective_id, effective_class = card.permission_rule_id_and_class(:read)
+    record_cache_divergence(card_id, [cached_rule_id, cached_rule_class],
+                            [effective_id, effective_class], trashed, state)
+    return state[:card_errors][card_id] = "NoEffectiveReadRule" if effective_id.nil?
+
+    verdicts = [effective_id, cached_rule_id, self_rule_id].compact.uniq
+                                                           .map { |rid| rule_verdict(rid.to_i, state) }
+    decided = verdicts.select { |v| %i[locked shared].include?(v) }
+    state[:disagreement_ids] << card_id if decided.uniq.size > 1
+    state[:locked] << card_id if decided.include?(:locked)
+  rescue StandardError => e
+    state[:card_errors][card_id] = e.class.name
+  end
+
+  # S-1. A cached rule that disagrees with Decko's resolution is a stale cache the operator must repair
+  # before selection -- but only for a LIVE row. A trashed card's rule card is trashed with it, so
+  # Decko resolves the deck default for it and no repair can ever make the two agree: treating that as
+  # "unaudited" would make apply! refuse forever on any deck that has ever deleted a private card.
+  # Trashed divergences are therefore reported in their own bucket, and the union (which reads the
+  # trashed card's own +*self+*read) is what keeps such a card excluded.
+  def record_cache_divergence(card_id, cached, effective, trashed, state)
+    return if cached == effective
+
+    if truthy?(trashed)
+      state[:trashed_divergence_ids] << card_id
+    else
+      state[:stale_ids] << card_id
+    end
+  end
+
+  def truthy?(value)
+    [true, "t", "true", 1, "1"].include?(value)
+  end
+
+  # :locked, :shared, :absent or :error for a rule id, memoized.
+  def rule_verdict(rule_id, state)
+    return state[:verdicts][rule_id] if state[:verdicts].key?(rule_id)
+
+    status, value = rule_principals(rule_id)
+    verdict =
+      case status
+      when :absent
+        state[:absent_rule_ids] << rule_id
+        :absent
+      when :error
+        state[:rule_errors][rule_id] = value
+        :error
+      else
+        value.any? && (value - LOCK_PRINCIPAL_KEYS).empty? ? :locked : :shared
+      end
+    state[:verdicts][rule_id] = verdict
+  end
+
+  # S-3/S-7. [:ok, key-normalized principals] | [:absent, nil] | [:error, "ExceptionClass"].
+  # "No rule card" and "resolution failed" are different facts: neither may read as an empty,
+  # harmless rule.
   def rule_principals(rule_id)
-    rule = Card.fetch(rule_id, look_in_trash: true)
-    return nil unless rule
+    rule = begin
+      Card.fetch(rule_id, look_in_trash: true)
+    rescue StandardError => e
+      return [:error, e.class.name]
+    end
+    return [:absent, nil] unless rule
 
     rule.include_set_modules
-    rule.item_names.map(&:to_s)
-  rescue StandardError
-    nil
+    [:ok, rule.item_names.map { |name| name.to_name.key }]
+  rescue StandardError => e
+    [:error, e.class.name]
   end
 
+  # S-4. A card cannot survive a referent it points at through its name parts, its type or its read
+  # rule, so the closure walks all four columns.
   def dependents_of(ids, conn, keep:)
+    return [] if ids.empty?
+
     found = []
     frontier = ids
     until frontier.empty?
       list = frontier.join(",")
-      rows = conn.select_values("SELECT id FROM cards WHERE left_id IN (#{list}) OR right_id IN (#{list})").map(&:to_i)
+      rows = conn.select_values(
+        "SELECT id FROM cards WHERE left_id IN (#{list}) OR right_id IN (#{list}) " \
+        "OR type_id IN (#{list}) OR read_rule_id IN (#{list})"
+      ).map(&:to_i)
       frontier = rows - ids - found - keep
       found.concat(frontier)
     end
     found
   end
 
+  def dangling(excluded, conn, column)
+    return [] if excluded.empty?
+
+    list = excluded.join(",")
+    (conn.select_values("SELECT id FROM cards WHERE #{column} IN (#{list})").map(&:to_i) - excluded).sort
+  end
+
+  def dangling_parts(excluded, conn)
+    return [] if excluded.empty?
+
+    list = excluded.join(",")
+    (conn.select_values("SELECT id FROM cards WHERE left_id IN (#{list}) OR right_id IN (#{list})")
+         .map(&:to_i) - excluded).sort
+  end
+
   def codenamed(ids)
     return [] if ids.empty?
 
     Card.where(id: ids).where.not(codename: nil).pluck(:id)
+  end
+
+  def codename_map(ids)
+    return {} if ids.empty?
+
+    Card.where(id: ids).where.not(codename: nil).pluck(:id, :codename).to_h { |id, cn| [id, cn.to_s] }
   end
 
   def attachment_cards(ids)
