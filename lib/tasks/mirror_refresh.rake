@@ -1,8 +1,19 @@
 # frozen_string_literal: true
 
 namespace :mirror_refresh do
+  # G-CACHE. Cardio.database comes from database.yml, so DATABASE_URL moves the connection but NOT the
+  # Rails cache namespace: a staged stage would otherwise read and write the LIVE deck's shared cache.
+  # Every stage that may be pointed at a staged copy isolates its own cache first and says so, instead
+  # of trusting the caller to have exported NO_RAILS_CACHE.
+  def isolate_refresh_cache!
+    ns = MirrorRuntimeGuards.isolate_cache!
+    puts "cache isolated: shared_cache=#{MirrorRuntimeGuards.shared_cache_live? ? 'on' : 'off'} " \
+         "namespace_db=#{ns} connected_db=#{MirrorRuntimeGuards.connected_database}"
+  end
+
   desc "Refuse a DB refresh unless the mirror is dormant and its tables are absent (SPEC 7.3)"
   task assert_precondition: :environment do
+    isolate_refresh_cache!
     MirrorRuntimeGuards.assert_refresh_precondition!
     puts "mirror refresh precondition holds"
   end
@@ -10,6 +21,7 @@ namespace :mirror_refresh do
   desc "Write the STRICT filter manifest: ids and counts only, changes nothing (OUT=path)"
   task strict_manifest: :environment do
     require Rails.root.join("mod/atomspace_mirror/lib/mirror_strict_filter").to_s
+    isolate_refresh_cache!
     plan = MirrorStrictFilter.manifest
     report = plan.to_h_report
     File.write(ENV.fetch("OUT"), JSON.pretty_generate(report))
@@ -36,6 +48,7 @@ namespace :mirror_refresh do
   desc "DESTRUCTIVE: apply the STRICT filter to a staged copy (CONFIRM_DB=<name of the live database>)"
   task strict_apply: :environment do
     require Rails.root.join("mod/atomspace_mirror/lib/mirror_strict_filter").to_s
+    isolate_refresh_cache!
     ack = ENV["ACK_PROTECTED"].to_s.split(/[,\s]+/).reject(&:empty?).map(&:to_i)
     # S-3: the unresolved-rule refusal is binding on apply, not only on the manifest. MirrorStrictFilter
     # raises Refused; the task turns it into a non-zero exit so the runner stage stops.
@@ -50,6 +63,7 @@ namespace :mirror_refresh do
   desc "Audit cached read rules against Decko's resolution; REPAIR=1 repairs and re-audits (SPEC 8.7)"
   task acl_audit: :environment do
     require Rails.root.join("mod/atomspace_mirror/lib/mirror_acl_audit").to_s
+    isolate_refresh_cache!
     result = MirrorAclAudit.audit
     puts result.to_h_report.to_json
     if ENV["REPAIR"] == "1" && result.repair_ids.any?
