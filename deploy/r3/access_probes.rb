@@ -14,18 +14,42 @@ def check(label, ok, detail = nil)
   puts "#{ok ? 'PASS' : 'FAIL'} #{label}#{ok ? '' : " :: #{detail.inspect[0, 160]}"}"
 end
 
-conn = ActiveRecord::Base.connection
-db = conn.current_database
-unless db.end_with?("_staged")
-  warn "REFUSED: probes run only on a database named *_staged"
+def refuse(message)
+  warn "REFUSED: #{message}"
   $stdout.flush
   exit!(2)
 end
+
+# A JSON file named by a setting, or a refusal. The message names the setting and never quotes the file.
+def read_json(setting)
+  path = ENV[setting].to_s
+  refuse("#{setting} is not set") if path.empty?
+  refuse("#{setting} does not name a readable file") unless File.file?(path) && File.readable?(path)
+  JSON.parse(File.read(path))
+rescue JSON::ParserError
+  refuse("#{setting} does not hold valid JSON")
+end
+
+def card_ids?(list) = list.is_a?(Array) && list.all? { |i| i.is_a?(Integer) && i.positive? }
+
+conn = ActiveRecord::Base.connection
+db = conn.current_database
+refuse("probes run only on a database named *_staged") unless db.end_with?("_staged")
 conn.execute("SET SESSION default_transaction_read_only = on")
 puts "database: #{db} (session read-only)"
 
-manifest = JSON.parse(File.read(ENV.fetch("R3_MANIFEST")))
-excluded = manifest.fetch("excluded_ids").map(&:to_i)
+# Every input is read and checked here, before the first probe, so a bad one cannot stop the run halfway.
+manifest = read_json("R3_MANIFEST")
+unless manifest.is_a?(Hash) && card_ids?(manifest["excluded_ids"]) && card_ids?(manifest["attachment_card_ids"])
+  refuse("R3_MANIFEST is not a strict manifest")
+end
+fresh = []
+unless ENV["R3_MAP_FILE"].to_s.empty?
+  reference_map = read_json("R3_MAP_FILE")
+  refuse("R3_MAP_FILE is not a reference map") unless reference_map.is_a?(Hash) && card_ids?(reference_map.values)
+  fresh = reference_map.values
+end
+excluded = manifest["excluded_ids"]
 list = excluded.empty? ? "0" : excluded.join(",")
 count = ->(sql) { conn.select_value(sql).to_i }
 
@@ -45,7 +69,6 @@ else
 end
 
 puts "--- credentials are sanitized (absence checks)"
-fresh = ENV["R3_MAP_FILE"].to_s.empty? ? [] : JSON.parse(File.read(ENV["R3_MAP_FILE"])).values.map { |v| Integer(v) }
 fresh_list = fresh.empty? ? "0" : fresh.join(",")
 fresh_accounts = "SELECT id FROM cards WHERE left_id IN (#{fresh_list})"
 secret_rights = "SELECT id FROM cards WHERE codename IN ('password','salt','api_key','token','reset_token')"

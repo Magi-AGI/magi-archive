@@ -12,15 +12,23 @@
 #
 # Accounts get a random password nobody knows; the person resets it. There is no password preservation and no hash export.
 # Restore is a dry run unless R3_RESTORE_APPLY=1, which r3/run_ruby.sh sets only behind --apply and R3_GO. A dry run does
-# all the work in a transaction and rolls it back. Prints ids, counts and classes, never content or emails.
+# all the work in a transaction and rolls it back. It never commits, so it never reaches Decko's integrate phase and
+# cannot prove that phase.
+# An apply commits card by card, because Decko runs each card's integrate phase from after_commit, and that raises under
+# an outer transaction. A run that stops halfway therefore leaves a partial staged copy. The reference map exists before the
+# first commit and is saved as each card lands, including a card whose integrate phase raised after its commit. To recover,
+# drop the staged copy, restore it from the dump again, and delete the map file.
+# Before the first create, the card id sequence moves past every captured id and the occupied range, so no card can take
+# one. A dry run puts that sequence back; its rolled-back creates still leave gaps in the act and action id sequences.
+# Prints ids, counts and classes, never content or emails.
 #
 # Env: R3_PRESERVE_FILE, R3_MAP_FILE, R3_DEV_ACCOUNTS (comma-separated names), R3_DEV_NAV_CARDS (optional, comma-separated).
 require "json"
 require "securerandom"
 require "digest"
 
-STEP = ENV.fetch("R3_PRESERVE_STEP")
-FILE = ENV.fetch("R3_PRESERVE_FILE")
+STEP = ENV["R3_PRESERVE_STEP"].to_s
+FILE = ENV["R3_PRESERVE_FILE"].to_s
 ROOT = "Administrator"
 # Occupied by retained production GM cards on dev; a card created here must never land on one of them.
 OCCUPIED_IDS = (10_986..11_013).freeze
@@ -31,6 +39,7 @@ def stop(message)
   $stdout.flush
   exit!(2)
 end
+stop("R3_PRESERVE_FILE is not set") if FILE.empty?
 
 def assert_staged!
   db = ActiveRecord::Base.connection.current_database
@@ -61,7 +70,7 @@ def credential_part?(card)
 end
 
 def capture
-  accounts = ENV.fetch("R3_DEV_ACCOUNTS").split(",").map(&:strip).reject(&:empty?)
+  accounts = ENV.fetch("R3_DEV_ACCOUNTS", "").split(",").map(&:strip).reject(&:empty?)
   stop("name the dev accounts to preserve in R3_DEV_ACCOUNTS") if accounts.empty?
   nav = ENV.fetch("R3_DEV_NAV_CARDS", "").split(",").map(&:strip).reject(&:empty?)
   conn = ActiveRecord::Base.connection
@@ -99,14 +108,45 @@ def capture
   puts "content sha256 prefix: #{Digest::SHA256.file(FILE).hexdigest[0, 16]} (contents not printed)"
 end
 
+def apply? = ENV["R3_RESTORE_APPLY"] == "1"
+
+# Written whole and renamed into place, so the file on disk is always complete JSON and always mode 600.
+def save_map(map)
+  path = ENV.fetch("R3_MAP_FILE")
+  File.open("#{path}.tmp", File::WRONLY | File::CREAT | File::TRUNC, 0o600) { |f| f.write(JSON.generate(map)) }
+  File.rename("#{path}.tmp", path)
+end
+
+# Card.create!, with the object kept. The integrate phase runs from after_commit, so save! can raise with the card already
+# durable. The map records such a card, and the error still goes on up.
+def create_mapped(entry, map, attributes)
+  card = Card.new(attributes)
+  begin
+    card.save!
+  ensure
+    if card.id && Card.where(id: card.id).exists?
+      map[entry["old_id"].to_s] = card.id
+      save_map(map) if apply?
+    end
+  end
+  card
+end
+
+# Ids come from this sequence, subcards' included, so starting it here keeps every new id clear of them all.
+def clear_id_sequence(bundle)
+  conn = ActiveRecord::Base.connection
+  old_ids = (bundle["docs"] + bundle["nav"] + bundle["accounts"]).map { |e| Integer(e["old_id"]) }
+  floor = [conn.select_value("SELECT last_value FROM cards_id_seq").to_i, OCCUPIED_IDS.end, *old_ids].max
+  conn.select_value("SELECT setval('cards_id_seq', #{floor})")
+end
+
 def create_fresh(entry, map, skipped)
   if Card[entry["name"]]
     skipped << entry["old_id"]
     return
   end
-  card = Card.create!(name: entry["name"], type: entry["type"], content: entry["content"])
+  card = create_mapped(entry, map, name: entry["name"], type: entry["type"], content: entry["content"])
   stop("a recreated card landed on an occupied id") if OCCUPIED_IDS.cover?(card.id)
-  map[entry["old_id"].to_s] = card.id
 end
 
 def create_account(entry, map, skipped)
@@ -114,11 +154,10 @@ def create_account(entry, map, skipped)
     skipped << entry["old_id"]
     return
   end
-  user = Card.create!(name: entry["name"], type_id: Card::UserID,
-                      subcards: { "+*account" => { "+*email" => entry["email"], "+*password" => "R3-#{SecureRandom.hex(24)}aA1!",
-                                                   "+*status" => "active" } })
+  user = create_mapped(entry, map, name: entry["name"], type_id: Card::UserID,
+                       subcards: { "+*account" => { "+*email" => entry["email"], "+*password" => "R3-#{SecureRandom.hex(24)}aA1!",
+                                                    "+*status" => "active" } })
   stop("a recreated account landed on an occupied id") if OCCUPIED_IDS.cover?(user.id)
-  map[entry["old_id"].to_s] = user.id
   entry["roles"].each do |role|
     next unless Card[role]
 
@@ -127,33 +166,76 @@ def create_account(entry, map, skipped)
   end
 end
 
+# Refusal messages name the setting and never quote the file: it holds card content.
+def read_bundle
+  stop("R3_PRESERVE_FILE does not name a readable file") unless File.file?(FILE) && File.readable?(FILE)
+  bundle = JSON.parse(File.read(FILE))
+  stop("R3_PRESERVE_FILE is not a capture file") unless bundle.is_a?(Hash) && %w[docs nav accounts].all? { |k| bundle[k].is_a?(Array) }
+  bundle
+rescue JSON::ParserError
+  stop("R3_PRESERVE_FILE does not hold valid JSON")
+end
+
+# The map is written after the commit, so a path that cannot take it has to stop the run before anything commits.
+def assert_map_file!
+  path = ENV["R3_MAP_FILE"].to_s
+  stop("R3_MAP_FILE is not set; --apply writes the reference map there") if path.empty?
+  dir = File.dirname(path)
+  stop("R3_MAP_FILE is in a directory that cannot be written") unless File.directory?(dir) && File.writable?(dir)
+  stop("R3_MAP_FILE already exists; a second apply would replace it, so inspect it by hand") if File.exist?(path)
+end
+
+def recreate_all(bundle, map, skipped)
+  bot do
+    # Parents before children: a compound name needs its left part first.
+    entries = (bundle["docs"] + bundle["nav"]).sort_by { |e| e["name"].count("+") }
+    entries.each { |e| create_fresh(e, map, skipped) }
+    bundle["accounts"].each { |e| create_account(e, map, skipped) }
+  end
+  missing = map.values.reject { |id| Card.where(id: id).exists? }
+  stop("recreated cards are missing: #{missing.size}") unless missing.empty?
+  reused = map.select { |old, fresh| old.to_i == fresh }
+  stop("a recreated card kept its old id") unless reused.empty?
+  puts "RESTORE created=#{map.size} skipped_existing=#{skipped.size} apply=#{apply?}"
+end
+
+def restore_apply(bundle, map, skipped)
+  assert_map_file!
+  save_map(map) # mode 600 and proven writable before the first commit
+  clear_id_sequence(bundle)
+  begin
+    recreate_all(bundle, map, skipped)
+  rescue StandardError => e
+    puts "RESTORE stopped: #{map.size} cards committed and mapped (#{e.class}). " \
+         "The staged copy is partial: drop it, restore it from the dump again, delete the map file."
+    raise
+  end
+  puts "reference map written: #{map.size} entries, mode 600"
+end
+
+def restore_dry_run(bundle, map, skipped)
+  conn = ActiveRecord::Base.connection
+  seq = conn.select_one("SELECT last_value, is_called FROM cards_id_seq")
+  clear_id_sequence(bundle)
+  ActiveRecord::Base.transaction do
+    recreate_all(bundle, map, skipped)
+    raise ActiveRecord::Rollback
+  end
+  puts "dry run: rolled back; no reference map written"
+ensure
+  conn.select_value("SELECT setval('cards_id_seq', #{seq['last_value'].to_i}, #{seq['is_called'].to_s.start_with?('t')})") if seq
+end
+
 def restore
   assert_staged!
-  bundle = JSON.parse(File.read(FILE))
+  bundle = read_bundle
   map = {}
   skipped = []
-  apply = ENV["R3_RESTORE_APPLY"] == "1"
-  ActiveRecord::Base.transaction do
-    bot do
-      # Parents before children: a compound name needs its left part first.
-      entries = (bundle["docs"] + bundle["nav"]).sort_by { |e| e["name"].count("+") }
-      entries.each { |e| create_fresh(e, map, skipped) }
-      bundle["accounts"].each { |e| create_account(e, map, skipped) }
-    end
-    missing = map.values.reject { |id| Card.exists?(id: id) }
-    stop("recreated cards are missing: #{missing.size}") unless missing.empty?
-    reused = map.select { |old, fresh| old.to_i == fresh }
-    stop("a recreated card kept its old id") unless reused.empty?
-    puts "RESTORE created=#{map.size} skipped_existing=#{skipped.size} apply=#{apply}"
-    raise ActiveRecord::Rollback unless apply
-  end
-  if apply
-    map_file = ENV.fetch("R3_MAP_FILE")
-    File.open(map_file, File::WRONLY | File::CREAT | File::TRUNC, 0o600) { |f| f.write(JSON.generate(map)) }
-    puts "reference map written: #{map.size} entries, mode 600"
-  else
-    puts "dry run: rolled back; no reference map written"
-  end
+  # A committed card now runs its integrate phase, and that can deliver mail from rules in the data. Decko's own card
+  # loader turns mail off the same way.
+  Card::Mailer.perform_deliveries = false
+  puts "mail delivery: #{Card::Mailer.perform_deliveries ? 'on' : 'off'}"
+  apply? ? restore_apply(bundle, map, skipped) : restore_dry_run(bundle, map, skipped)
 end
 
 case STEP

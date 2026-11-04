@@ -12,7 +12,8 @@ r3_parse_mode "$@"
 r3_load_db_env
 r3_assert_target
 
-: "${R3_MANIFEST:?set R3_MANIFEST}" "${R3_FILES_DIR:?set R3_FILES_DIR}"
+[ -n "${R3_MANIFEST:-}" ] || r3_die "R3_MANIFEST is not set"
+: "${R3_FILES_DIR:?set R3_FILES_DIR}"
 [ -r "$R3_MANIFEST" ] || r3_die "cannot read the manifest"
 [ -d "$R3_FILES_DIR" ] || r3_die "no such store"
 STORE=$(readlink -f "$R3_FILES_DIR")
@@ -22,7 +23,13 @@ PUBLIC=${R3_PUBLIC_FILES_DIR:-}
 # Read in a command substitution, not a process substitution: its exit status is what proves the whole list was valid.
 ID_LIST=$(python3 -c '
 import json, sys
-for i in json.load(open(sys.argv[1]))["attachment_card_ids"]:
+try:
+    ids = json.load(open(sys.argv[1]))["attachment_card_ids"]
+except (ValueError, KeyError, TypeError):
+    sys.exit("the manifest is not a strict manifest")
+if not isinstance(ids, list):
+    sys.exit("the manifest is not a strict manifest")
+for i in ids:
     if not isinstance(i, int) or isinstance(i, bool) or i <= 0:
         sys.exit("manifest holds a non-integer attachment id")
     print(i)' "$R3_MANIFEST") || r3_die "the manifest is malformed"
