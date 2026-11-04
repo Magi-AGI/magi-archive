@@ -1,0 +1,22 @@
+# TEST-ONLY FIXTURE. Not loaded by any shipped entrypoint, not part of the deployed deck.
+#
+# Purpose: the negative control for the G-CACHE pre-boot guard. The real deck Rakefile FORCES
+# NO_RAILS_CACHE="true" for every mirror_refresh:* task before config/application is required, and
+# ships NO bypass -- so unguarded boot is unreachable through the real Rakefile by design.
+#
+# Without a way to observe genuinely unguarded boot, the positive examples
+# (shared_cache_at_boot=off) would be unfalsifiable: they could be passing because the guard works,
+# or because the test environment simply has no live shared cache. This fixture supplies the missing
+# half. It loads the SAME application and the SAME mirror_refresh tasks, but deliberately OMITS the
+# pre-boot guard block, so a child `rake -f` against it boots with the shared cache live
+# (shared_cache_at_boot=on) and reports preboot_guard=absent.
+#
+# The spec asserts BOTH sides:
+#   - real Rakefile + NO_RAILS_CACHE=false  -> shared_cache_at_boot=off, forced-over-caller:false
+#   - this fixture  + NO_RAILS_CACHE=false  -> shared_cache_at_boot=on,  preboot_guard=absent
+# Layer two (isolate_refresh_cache!) still recovers the run in the fixture case, which is itself
+# worth proving.
+
+require File.expand_path("../../../../config/application", __FILE__)
+
+MagiArchive::Application.load_tasks

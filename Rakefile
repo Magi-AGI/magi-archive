@@ -20,21 +20,41 @@
 # the same assignment the card gem itself uses for destructive maintenance tasks
 # (card-1.110.0 mod/core/lib/tasks/card.rake:13 and mod/core/lib/tasks/card/migrate.rake:4,
 # ENV["NO_RAILS_CACHE"] = "true"); the only difference is that those run after boot, which is exactly
-# the gap being closed. `||=` keeps an explicit caller setting authoritative (the scripted
-# entrypoints dev-runner/stages/R3.sh and dev-runner/r3/run_ruby.sh already export it).
+# the gap being closed. An unsafe explicit caller value is forced to "true" rather than honored --
+# see the FAIL-CLOSED note below.
 #
 # The in-task memo reset, Cardio.database namespace correction and fail-closed assertion all remain
 # as the second defense layer: this guard is not a substitute for them.
+#
+# FAIL-CLOSED OVER AN EXPLICIT CALLER VALUE (impl8 review finding). An earlier revision deferred to
+# ANY explicit NO_RAILS_CACHE value. That left the original defect wide open for
+# `NO_RAILS_CACHE=false` (or any typo'd non-"true" value): boot then ran against the LIVE deck's
+# cache namespace, and layer two cannot retroactively undo cache reads/writes that already happened
+# during initialization. Isolation is not a caller preference for these tasks -- it is a
+# precondition -- so a non-"true" value is FORCED to "true" here, before config/application.
+#
+# There is deliberately NO bypass. The regression suite proves this guard is load-bearing by running
+# its negative control against a test-only fixture Rakefile that omits the guard entirely
+# (spec/fixtures/unguarded/Rakefile), rather than through an opt-out shipped in this file.
 # ---------------------------------------------------------------------------
 if ARGV.any? { |arg| arg =~ /\Amirror_refresh:/ }
   # Provenance, so the task body can report -- and a regression test can prove -- that isolation was
   # established before application initialization rather than inside the task.
-  if ENV["NO_RAILS_CACHE"].nil?
+  caller_value = ENV["NO_RAILS_CACHE"]
+  if caller_value.nil?
     ENV["NO_RAILS_CACHE"] = "true"
     ENV["MIRROR_REFRESH_PREBOOT_CACHE_GUARD"] = "rakefile"
+  elsif caller_value == "true"
+    # Already safe; the scripted entrypoints (R3.sh, run_ruby.sh) export exactly this.
+    ENV["MIRROR_REFRESH_PREBOOT_CACHE_GUARD"] = "caller:true"
   else
-    # An explicit caller value stays authoritative (the scripted entrypoints already export "true").
-    ENV["MIRROR_REFRESH_PREBOOT_CACHE_GUARD"] = "caller:#{ENV['NO_RAILS_CACHE']}"
+    # An unsafe explicit value is overridden, not honored, and the override is recorded.
+    # Whitespace is squeezed so the provenance line stays single-token-per-field parseable.
+    ENV["NO_RAILS_CACHE"] = "true"
+    ENV["MIRROR_REFRESH_PREBOOT_CACHE_GUARD"] =
+      "rakefile:forced-over-caller:#{caller_value.to_s.gsub(/\s+/, '_')}"
+    warn "[mirror_refresh] NO_RAILS_CACHE=#{caller_value} is unsafe for mirror_refresh:* tasks; " \
+         "forcing cache isolation to \"true\" before application boot."
   end
 end
 

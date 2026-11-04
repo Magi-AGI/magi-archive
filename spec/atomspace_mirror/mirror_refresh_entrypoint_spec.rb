@@ -59,6 +59,9 @@ RSpec.describe "mirror_refresh rake entrypoint", "G-CACHE pre-boot cache isolati
       # The whole point: the child is NOT told to disable the cache. Only the Rakefile can.
       "NO_RAILS_CACHE" => nil,
       "MIRROR_REFRESH_PREBOOT_CACHE_GUARD" => nil,
+      # Defensive: no bypass exists in the shipped Rakefile, but an inherited parent value must
+      # never be able to influence what these examples observe.
+      "MIRROR_REFRESH_ALLOW_SHARED_CACHE_AT_BOOT" => nil,
       # Keep the mirror dormant so the precondition's cache gate is the gate under test.
       "ATOMSPACE_MIRRORING_ENABLED" => nil
     }.merge(extra)
@@ -79,6 +82,15 @@ RSpec.describe "mirror_refresh rake entrypoint", "G-CACHE pre-boot cache isolati
   # child performs its own bundler/setup and, crucially, parses the Rakefile itself.
   def run_rake(task, extra_env = {})
     cmd = ["bundle", "_2.7.2_", "exec", "rake", task]
+    env = child_env(extra_env).merge("RUBYOPT" => nil)
+    Open3.capture2e(env, *cmd, chdir: Rails.root.to_s)
+  end
+
+  # Same, but against an explicit Rakefile via `rake -f`. Used only for the negative control, which
+  # runs the TEST-ONLY fixture Rakefile that omits the pre-boot guard. The shipped Rakefile has no
+  # bypass, so this is the only way to observe genuinely unguarded boot.
+  def run_rake_with_rakefile(rakefile, task, extra_env = {})
+    cmd = ["bundle", "_2.7.2_", "exec", "rake", "-f", rakefile.to_s, task]
     env = child_env(extra_env).merge("RUBYOPT" => nil)
     Open3.capture2e(env, *cmd, chdir: Rails.root.to_s)
   end
@@ -139,16 +151,33 @@ RSpec.describe "mirror_refresh rake entrypoint", "G-CACHE pre-boot cache isolati
   end
 
   describe "the pre-boot guard is load-bearing, not decorative" do
-    # The negative control. With NO_RAILS_CACHE explicitly set to something other than "true", the
-    # Rakefile defers to the caller (`||=` semantics) and the shared cache IS live through boot.
-    # If this example reported "off" the positive example above would be meaningless, because it
-    # would mean something other than the guard was turning the cache off.
-    it "shows the shared cache live at boot when the caller overrides the flag" do
-      out, = run_rake("mirror_refresh:assert_precondition", "NO_RAILS_CACHE" => "false")
+    # The negative control, routed through a TEST-ONLY FIXTURE Rakefile that omits the guard
+    # (spec/fixtures/unguarded/Rakefile). The shipped Rakefile has no bypass, so unguarded boot is
+    # unreachable through it -- which is the point. This fixture supplies the falsifying half: if
+    # this example reported "off" the positive examples above would be meaningless, because it would
+    # mean something other than the guard was turning the cache off.
+    it "shows the shared cache live at boot when the guard is absent from the Rakefile" do
+      out, = run_rake_with_rakefile(
+        Rails.root.join("spec/fixtures/unguarded/Rakefile"),
+        "mirror_refresh:assert_precondition",
+        "NO_RAILS_CACHE" => nil
+      )
       fields = parse_cache_line(out)
       expect(fields["shared_cache_at_boot"]).to eq("on")
-      expect(fields["preboot_guard"]).to eq("caller:false")
+      expect(fields["preboot_guard"]).to eq("absent")
       # Layer two still rescues the run: the task body isolates even when boot did not.
+      expect(fields["shared_cache"]).to eq("off")
+      expect(fields["namespace_db"]).to eq(fields["connected_db"])
+    end
+
+    # The fix for the impl8 review finding: an explicit NO_RAILS_CACHE=false must NOT reach
+    # application initialization. Isolation is forced before boot, so the unguarded boot state above
+    # is unreachable through the real Rakefile by any invocation, mistaken or otherwise.
+    it "forces isolation before boot when the caller supplies an unsafe value" do
+      out, = run_rake("mirror_refresh:assert_precondition", "NO_RAILS_CACHE" => "false")
+      fields = parse_cache_line(out)
+      expect(fields["shared_cache_at_boot"]).to eq("off")
+      expect(fields["preboot_guard"]).to eq("rakefile:forced-over-caller:false")
       expect(fields["shared_cache"]).to eq("off")
       expect(fields["namespace_db"]).to eq(fields["connected_db"])
     end
@@ -158,7 +187,7 @@ RSpec.describe "mirror_refresh rake entrypoint", "G-CACHE pre-boot cache isolati
     # Evaluates the REAL guard block as shipped -- the Rakefile text up to (but excluding) the
     # `require config/application` line -- in a child ruby with a controlled ARGV. Testing the actual
     # file rather than a restatement of its logic, and without paying for a Rails boot.
-    def guard_result_for(argv, preset = nil)
+    def guard_result_for(argv, preset = nil, extra = {})
       guard_src = Rails.root.join("Rakefile").read.split(/^require File\.expand_path/).first
       script = <<~RUBY
         ARGV.replace(#{argv.inspect})
@@ -166,7 +195,9 @@ RSpec.describe "mirror_refresh rake entrypoint", "G-CACHE pre-boot cache isolati
         puts "NO_RAILS_CACHE=" + ENV.fetch("NO_RAILS_CACHE", "<unset>")
         puts "GUARD=" + ENV.fetch("MIRROR_REFRESH_PREBOOT_CACHE_GUARD", "<unset>")
       RUBY
-      env = { "NO_RAILS_CACHE" => preset, "MIRROR_REFRESH_PREBOOT_CACHE_GUARD" => nil }
+      env = { "NO_RAILS_CACHE" => preset,
+              "MIRROR_REFRESH_PREBOOT_CACHE_GUARD" => nil,
+              "MIRROR_REFRESH_ALLOW_SHARED_CACHE_AT_BOOT" => nil }.merge(extra)
       out = nil
       Bundler.with_unbundled_env { out, = Open3.capture2e(env, "ruby", "-e", script) }
       out
@@ -195,9 +226,40 @@ RSpec.describe "mirror_refresh rake entrypoint", "G-CACHE pre-boot cache isolati
       expect(out).to include("NO_RAILS_CACHE=<unset>")
     end
 
-    it "defers to an explicit caller value instead of overwriting it" do
-      expect(guard_result_for(["mirror_refresh:acl_audit"], "false"))
-        .to include("NO_RAILS_CACHE=false", "GUARD=caller:false")
+    it "forces isolation over an unsafe explicit caller value" do
+      # The impl8 review finding: deferring to NO_RAILS_CACHE=false left the original defect open.
+      out = guard_result_for(["mirror_refresh:acl_audit"], "false")
+      expect(out).to include("NO_RAILS_CACHE=true", "GUARD=rakefile:forced-over-caller:false")
+    end
+
+    it "forces isolation over a typo'd or junk caller value" do
+      out = guard_result_for(["mirror_refresh:acl_audit"], "TRUE")
+      expect(out).to include("NO_RAILS_CACHE=true", "GUARD=rakefile:forced-over-caller:TRUE")
+    end
+
+    it "records an already-safe explicit caller value without rewriting it" do
+      expect(guard_result_for(["mirror_refresh:acl_audit"], "true"))
+        .to include("NO_RAILS_CACHE=true", "GUARD=caller:true")
+    end
+
+    it "squeezes whitespace in the provenance so the cache line stays parseable" do
+      out = guard_result_for(["mirror_refresh:acl_audit"], "no thanks")
+      expect(out).to include("NO_RAILS_CACHE=true", "GUARD=rakefile:forced-over-caller:no_thanks")
+    end
+
+    it "ships no bypass: no env value defeats the guard" do
+      # Nothing a caller can export reaches unguarded boot through the real Rakefile.
+      %w[
+        MIRROR_REFRESH_ALLOW_SHARED_CACHE_AT_BOOT
+        i-accept-shared-cache-contamination
+      ].each do |candidate|
+        out = guard_result_for(["mirror_refresh:acl_audit"], "false",
+                               candidate => "i-accept-shared-cache-contamination")
+        expect(out).to include("NO_RAILS_CACHE=true")
+        expect(out).to include("GUARD=rakefile:forced-over-caller:false")
+      end
+      expect(Rails.root.join("Rakefile").read)
+        .not_to include("i-accept-shared-cache-contamination")
     end
   end
 end
