@@ -44,6 +44,55 @@ RSpec.describe MirrorStrictFilter do
     saved&.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
   end
 
+  # The owner's confirmed cases. If any of these fails, the filter has drifted from the locked policy.
+  describe "LOCKED POLICY cases" do
+    def role(name) = Card[name] || bot { Card.create!(name: name, type: "Role") }
+
+    it "RETAINS read = shared Administrator + Raw Data Analyst" do
+      role("Raw Data Analyst")
+      id = locked("[[Administrator]]\n[[Raw Data Analyst]]")
+      expect(described_class.manifest.excluded_ids).not_to include(id)
+    end
+
+    it "RETAINS read = shared Nemquae + Magi Team" do
+      role("Magi Team")
+      id = locked("[[Nemquae]]\n[[Magi Team]]")
+      expect(described_class.manifest.excluded_ids).not_to include(id)
+    end
+
+    it "EXCLUDES read = Administrator only" do
+      id = locked("[[Administrator]]")
+      expect(described_class.manifest.excluded_ids).to include(id)
+    end
+
+    it "EXCLUDES read = Nemquae only" do
+      id = locked("[[Nemquae]]")
+      expect(described_class.manifest.excluded_ids).to include(id)
+    end
+
+    it "EXCLUDES read = Administrator + Nemquae only" do
+      id = locked("[[Administrator]]\n[[Nemquae]]")
+      expect(described_class.manifest.excluded_ids).to include(id)
+    end
+
+    it "EXCLUDES a card under the Administrator root, whatever its read rule" do
+      public_doc = card("Administrator+#{uniq('Public Doc')}")
+      rule(public_doc.name, "[[Anyone]]")
+      shared_doc = card("Administrator+#{uniq('Shared Doc')}")
+      rule(shared_doc.name, "[[Administrator]]\n[[Shark]]")
+      plan = described_class.manifest
+      expect(plan.excluded_ids).to include(public_doc.id, shared_doc.id)
+      expect(plan.ancestry_ids).to include(public_doc.id, shared_doc.id)
+    end
+
+    it "does not use a card's name or content, only its rule (Administrator in a shared card's name)" do
+      name = uniq("Administrator Only Notes")
+      made = card(name, "Administrator only")
+      rule(name, "[[Administrator]]\n[[Shark]]")
+      expect(described_class.manifest.excluded_ids).not_to include(made.id)
+    end
+  end
+
   describe "predicate B" do
     it "excludes a card readable solely by Administrator, solely by Nemquae, or by both" do
       ids = [locked("[[Administrator]]"), locked("[[Nemquae]]"), locked("[[Administrator]]\n[[Nemquae]]")]
@@ -225,15 +274,52 @@ RSpec.describe MirrorStrictFilter do
     end
   end
 
-  describe "S-4 fidelity: dependent closure covers type and read-rule references" do
-    it "takes the instances of an excluded type with it and leaves no dangling type reference" do
+  describe "S-4 fidelity: a reference to excluded data never widens the exclusion" do
+    it "keeps a public instance of an excluded type, and reports the conflict" do
       type_name = uniq("LockedType")
       type_card = bot { Card.create!(name: type_name, type: "Cardtype") }
       rule(type_name, "[[Administrator]]")
       instance = bot { Card.create!(name: uniq("Inst"), type_id: type_card.id, content: "y") }
       plan = described_class.manifest
-      expect(plan.excluded_ids).to include(type_card.id, instance.id)
-      expect(plan.dangling_type_ids).to be_empty
+      expect(plan.excluded_ids).to include(type_card.id)
+      expect(plan.excluded_ids).not_to include(instance.id)
+      expect(plan.dangling_type_ids).to include(instance.id)
+      expect(plan.dependency_conflict_ids).to include(instance.id)
+    end
+
+    it "keeps a shared child of an Administrator-only parent, and reports the conflict" do
+      id = locked("[[Administrator]]")
+      child = card("#{Card.fetch(id).name}+#{uniq('Shared Child')}")
+      rule(child.name, "[[Administrator]]\n[[Shark]]")
+      plan = described_class.manifest
+      expect(plan.excluded_ids).to include(id)
+      expect(plan.excluded_ids).not_to include(child.id)
+      expect(plan.dependency_conflict_ids).to include(child.id)
+    end
+
+    it "keeps a shared card whose right part is excluded, and reports the conflict" do
+      id = locked("[[Nemquae]]")
+      compound = card("#{uniq('Open')}+#{Card.fetch(id).name}")
+      rule(compound.name, "[[Shark]]")
+      plan = described_class.manifest
+      expect(plan.excluded_ids).not_to include(compound.id)
+      expect(plan.dependency_conflict_ids).to include(compound.id)
+    end
+
+    it "takes a locked card's inheriting child, because its own effective rule is locked" do
+      id = locked("[[Administrator]]")
+      child = card("#{Card.fetch(id).name}+#{uniq('Inheriting')}")
+      expect(described_class.manifest.read_locked_ids).to include(child.id)
+    end
+
+    it "takes trash named after an excluded card, even if its last rule was shared" do
+      id = locked("[[Administrator]]")
+      child = card("#{Card.fetch(id).name}+#{uniq('Trashed Child')}")
+      rule(child.name, "[[Administrator]]\n[[Shark]]")
+      bot { Card.fetch(child.id).delete! }
+      plan = described_class.manifest
+      expect(plan.excluded_ids).to include(child.id)
+      expect(plan.trash_derivative_ids).to include(child.id)
     end
 
     it "reports zero dangling type and read-rule references for an ordinary plan" do
@@ -241,6 +327,38 @@ RSpec.describe MirrorStrictFilter do
       plan = described_class.manifest
       expect(plan.dangling_type_ids).to eq([])
       expect(plan.dangling_read_rule_ids).to eq([])
+    end
+  end
+
+  describe "S-7 fidelity: a live card is decided by its effective rule alone" do
+    it "keeps a live shared card with a stale Administrator-only cache, and reports the stale cache" do
+      lock_name = uniq("LockSource")
+      card(lock_name)
+      lock_rule = rule(lock_name, "[[Administrator]]")
+      shared = locked("[[Administrator]]\n[[Shark]]")
+      stale_cache!(shared, lock_rule.id)
+      plan = described_class.manifest
+      expect(plan.excluded_ids).not_to include(shared)
+      expect(plan.stale_read_cache_ids).to include(shared)
+    end
+
+    it "keeps a live card whose Administrator-only self rule was deleted, and reports the disagreement" do
+      name = uniq("Rule Removed")
+      made = card(name)
+      old_rule = rule(name, "[[Administrator]]")
+      bot { Card.fetch(old_rule.id).delete! }
+      Card::Cache.reset_all
+      plan = described_class.manifest
+      expect(plan.excluded_ids).not_to include(made.id)
+      expect(plan.verdict_disagreement_ids).to include(made.id)
+    end
+
+    it "keeps a card with an empty read rule (not restricted solely to Administrator or Nemquae)" do
+      # Raised in the review packet as an ambiguity: Decko lets only always-ok principals read such a card.
+      name = uniq("Empty Rule")
+      made = card(name)
+      rule(name, "")
+      expect(described_class.manifest.excluded_ids).not_to include(made.id)
     end
   end
 
@@ -378,10 +496,19 @@ RSpec.describe MirrorStrictFilter do
         .to raise_error(described_class::Refused, /not audited/)
     end
 
+    it "S-4: apply! refuses while a retained card references excluded data, and names it" do
+      id = locked("[[Administrator]]")
+      child = card("#{Card.fetch(id).name}+#{uniq('Shared Child')}")
+      rule(child.name, "[[Administrator]]\n[[Shark]]")
+      drop_mirror
+      expect { described_class.apply!(confirm_db: conn.current_database) }
+        .to raise_error(described_class::Refused, /dangling.*#{child.id}/)
+      expect(Card.where(id: [id, child.id]).count).to eq(2)
+    end
+
     it "S-4: apply! refuses a plan that would leave a dangling reference" do
       id = locked("[[Administrator]]")
       keeper = card(uniq("Keeper"))
-      allow(described_class).to receive(:dependents_of).and_return([])
       Card.where(id: keeper.id).update_all(type_id: id)
       Card::Cache.reset_all
       drop_mirror
@@ -399,6 +526,10 @@ RSpec.describe MirrorStrictFilter do
       expect(action_ids).not_to be_empty
       expect(conn.select_value("SELECT COUNT(*) FROM card_references WHERE referee_id = #{id}").to_i).to be >= 1
 
+      # The seed deck has a real conflict: a field with its own *right rule under an Administrator-only card.
+      # The filter keeps it and apply! refuses, so this example removes it to reach the delete path.
+      Card.where(id: described_class.manifest.dependency_conflict_ids).delete_all
+      Card::Cache.reset_all
       drop_mirror
       described_class.apply!(confirm_db: conn.current_database)
 

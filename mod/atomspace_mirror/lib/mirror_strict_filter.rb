@@ -5,23 +5,21 @@
 #   A. Administrator documentation: everything under the Administrator root by left-id ancestry, except
 #      the role's authorization scaffolding (an enumerated set of ACL/role settings, such as
 #      Administrator+*members and Administrator+*self+*read; see SCAFFOLD_SETTING_CODENAMES).
-#   B. READ-locked cards: the card's read rule resolves to a non-empty set of principals that is
-#      entirely within {administrator, nemquae} by Card::Name#key. A rule shared with anyone else
-#      does not match. "The card's read rule" is the UNION of three independent resolutions -- the
-#      effective rule Decko computes now, the denormalized cards.read_rule_id cache, and the card's
-#      own +*self+*read rule -- because no single one survives every state (see read_classification).
+#   B. READ-locked cards: the card's effective read rule resolves to a non-empty set of principals
+#      that is entirely within {administrator, nemquae} by Card::Name#key. A rule shared with anyone
+#      else does not match. A trashed card has no usable effective rule, so its own last known rule
+#      stands in for it (see read_classification).
 #
 # Filtering uses the effective read rule that Decko itself resolves, never write rules and never
 # name/content search. An Administrator-value filter alone misses the doc tree, whose own rule points at
 # another principal.
 #
-# S-1/S-2 (selection fidelity): the denormalized cards.read_rule_id column is NOT the sole filter. A
-# restore can leave it stale, and Decko's own repair only fixes NULLs, so classifying the cached value
-# alone would retain a private card. Conversely a trashed card's EFFECTIVE rule collapses to *all+*read
-# even while its own +*self+*read still names Administrator only, so classifying the effective value
-# alone would LOSE a trashed private card. Selection is therefore the union of the effective verdict,
-# the cached verdict and the card's own self-rule verdict; the disagreements between them are reported
-# (stale_read_cache_ids, verdict_disagreement_ids) and the cache disagreement is refused by apply!
+# S-1/S-2 (selection fidelity): the denormalized cards.read_rule_id column is NOT the filter. A restore
+# can leave it stale, and Decko's own repair only fixes NULLs. A LIVE card is decided by its effective
+# rule alone: excluding it on a stale cache or a trashed self-rule would remove a card the locked policy
+# keeps. A TRASHED card's effective rule collapses to *all+*read, so it is decided by its cached rule
+# and its own +*self+*read instead. Disagreements between the three are reported
+# (stale_read_cache_ids, verdict_disagreement_ids), and a stale live cache is refused by apply!
 # (assert_audited_read_cache!). NULL-cached rows are classified like any other row and counted
 # explicitly instead of being dropped from the candidate set.
 #
@@ -29,10 +27,11 @@
 # raised" (:error) and never collapses either into a harmless empty rule. manifest reports both, and
 # both block apply!.
 #
-# S-4 (closure): dependents are cards that reference an excluded card through left_id, right_id,
-# type_id or read_rule_id; they cannot survive their referent. Whatever the closure cannot take (the
-# root, enumerated scaffolding, codenamed system cards) is checked for dangling references, and a plan
-# that would leave one is refused.
+# S-4 (references): only predicates A and B select cards. A retained card that references an excluded
+# one through left_id, right_id, type_id or read_rule_id is NOT excluded for that: the locked policy keeps
+# it. It cannot survive the delete either, so it is reported in dependency_conflict_ids and apply! refuses
+# until someone decides. The filter never widens the exclusion by itself. The one exception is trash: a
+# trashed card named after an excluded card is trash of excluded data, which the policy includes.
 #
 # S-5 (protected cards): codenamed system cards are never deleted, because the deck cannot run without
 # them. A codenamed card the policy says to EXCLUDE is a protected-card/privacy conflict: it is
@@ -70,7 +69,7 @@ module MirrorStrictFilter
 
   class Refused < StandardError; end
 
-  Manifest = Struct.new(:ancestry_ids, :read_locked_ids, :dependent_ids, :excluded_ids, :scaffold_ids,
+  Manifest = Struct.new(:ancestry_ids, :read_locked_ids, :trash_derivative_ids, :excluded_ids, :scaffold_ids,
                         :unresolved_rule_ids, :unresolved_rule_errors, :unresolved_card_ids,
                         :stale_read_cache_ids, :null_read_cache_ids, :verdict_disagreement_ids,
                         :trashed_cache_divergence_ids,
@@ -82,8 +81,12 @@ module MirrorStrictFilter
     def unresolved? = unresolved_rule_ids.any? || unresolved_rule_errors.any? || unresolved_card_ids.any?
     def dangling? = dangling_type_ids.any? || dangling_read_rule_ids.any? || dangling_part_ids.any?
 
+    # Retained cards that reference an excluded card. The policy keeps them; the delete cannot.
+    def dependency_conflict_ids = (dangling_type_ids + dangling_read_rule_ids + dangling_part_ids).uniq.sort
+
     def to_h_report
-      { ancestry: ancestry_ids.size, read_locked: read_locked_ids.size, dependents: dependent_ids.size,
+      { ancestry: ancestry_ids.size, read_locked: read_locked_ids.size, trash_derivatives: trash_derivative_ids.size,
+        dependency_conflict: dependency_conflict_ids.size, dependency_conflict_ids: dependency_conflict_ids,
         excluded_total: excluded_ids.size, trashed_excluded: Card.where(id: excluded_ids, trash: true).count,
         scaffold_kept: scaffold_ids.size,
         unresolved_rule_ids: unresolved_rule_ids, unresolved_rule_errors: unresolved_rule_errors,
@@ -114,13 +117,13 @@ module MirrorStrictFilter
     protected_ids = codenamed(candidates)
     base = candidates - protected_ids
     keep = (scaffold + [root] + protected_ids).uniq
-    dependents = dependents_of(base, conn, keep: keep)
-    protected_dependents = codenamed(dependents)
-    dependents -= protected_dependents
-    excluded = (base + dependents).uniq.sort
-    all_protected = (protected_ids + protected_dependents).sort
+    derivatives = trash_derivatives_of(base, conn, keep: keep)
+    protected_derivatives = codenamed(derivatives)
+    derivatives -= protected_derivatives
+    excluded = (base + derivatives).uniq.sort
+    all_protected = (protected_ids + protected_derivatives).sort
     Manifest.new(
-      ancestry_ids: ancestry.sort, read_locked_ids: locked.sort, dependent_ids: dependents.sort,
+      ancestry_ids: ancestry.sort, read_locked_ids: locked.sort, trash_derivative_ids: derivatives.sort,
       excluded_ids: excluded, scaffold_ids: scaffold.sort,
       unresolved_rule_ids: read[:absent_rule_ids].sort, unresolved_rule_errors: read[:rule_errors],
       unresolved_card_ids: read[:card_errors].keys.sort,
@@ -277,18 +280,16 @@ module MirrorStrictFilter
   end
 
   # S-1/S-2/S-7. Classify by the card's read rule over every row in the database, including trash and
-  # including NULL-cached rows. No single resolution is sufficient on its own:
+  # including NULL-cached rows. Three resolutions exist:
   #
-  #   * effective  -- what Decko resolves right now. Authoritative for a live card, but a trashed card's
-  #                   effective rule collapses to the deck default (*all+*read), so it LOSES a trashed
-  #                   private card.
-  #   * cached     -- cards.read_rule_id/read_rule_class. Survives trashing, but a restore can leave it
-  #                   stale, so on its own it RETAINS a private card.
-  #   * self rule  -- the card's own +*self+*read. Survives both, absent for most cards.
+  #   * effective  -- what Decko resolves right now. This IS the policy's "effective READ" for a live card,
+  #                   but a trashed card's effective rule collapses to the deck default (*all+*read).
+  #   * cached     -- cards.read_rule_id/read_rule_class. Survives trashing, but a restore can leave it stale.
+  #   * self rule  -- the card's own +*self+*read, trash included. Survives both, absent for most cards.
   #
-  # The verdict is the UNION: locked if ANY resolution says locked. That fails closed, which is the only
-  # direction policy permits. Where the resolutions disagree the card id is recorded in
-  # verdict_disagreement_ids and reported, never silently reconciled.
+  # A live card is locked if its effective rule is locked, and only then. A trashed card is locked if its
+  # cached rule or its own self rule is locked, because those are all that remain of its real rule. Where
+  # any of the three disagree the card id is recorded in verdict_disagreement_ids, never silently reconciled.
   def read_classification(conn)
     cached = conn.select_rows("SELECT id, read_rule_id, read_rule_class, trash FROM cards")
                  .to_h { |id, rid, rcls, trash| [id.to_i, [rid&.to_i, rcls, trash]] }
@@ -336,7 +337,8 @@ module MirrorStrictFilter
                                                            .map { |rid| rule_verdict(rid.to_i, state) }
     decided = verdicts.select { |v| %i[locked shared].include?(v) }
     state[:disagreement_ids] << card_id if decided.uniq.size > 1
-    state[:locked] << card_id if decided.include?(:locked)
+    deciding = truthy?(trashed) ? [cached_rule_id, self_rule_id] : [effective_id]
+    state[:locked] << card_id if deciding.compact.any? { |rid| rule_verdict(rid.to_i, state) == :locked }
   rescue StandardError => e
     state[:card_errors][card_id] = e.class.name
   end
@@ -397,9 +399,10 @@ module MirrorStrictFilter
     [:error, e.class.name]
   end
 
-  # S-4. A card cannot survive a referent it points at through its name parts, its type or its read
-  # rule, so the closure walks all four columns.
-  def dependents_of(ids, conn, keep:)
+  # S-4. Trash named after an excluded card is trash of excluded data, so it goes too, transitively. Live
+  # cards are never taken this way, and a trashed card that only points at an excluded type or read rule
+  # is not named after it: both are left for the conflict report.
+  def trash_derivatives_of(ids, conn, keep:)
     return [] if ids.empty?
 
     found = []
@@ -407,8 +410,7 @@ module MirrorStrictFilter
     until frontier.empty?
       list = frontier.join(",")
       rows = conn.select_values(
-        "SELECT id FROM cards WHERE left_id IN (#{list}) OR right_id IN (#{list}) " \
-        "OR type_id IN (#{list}) OR read_rule_id IN (#{list})"
+        "SELECT id FROM cards WHERE trash AND (left_id IN (#{list}) OR right_id IN (#{list}))"
       ).map(&:to_i)
       frontier = rows - ids - found - keep
       found.concat(frontier)
