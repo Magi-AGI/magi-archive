@@ -4,6 +4,7 @@ require "net/http"
 require "json"
 require "uri"
 require "socket"
+require_relative "sidecar_unix_http"
 
 # Level 8 drain -> Level 3 sidecar IPC. The drain forwards ONE already-encoded outbox payload per
 # iteration to the sidecar's POST /apply (localhost; Level 3 B2) and classifies the outcome.
@@ -84,13 +85,17 @@ class SidecarClient
   # never silently dropping a Space-but-not-Postgres orphan.
   class QuarantineError < StandardError; end
 
+  # A quarantine scans the Space, so it gets more time than a read.
+  ADMIN_TIMEOUT_SECONDS = 30
+
   def initialize(host: "127.0.0.1", port: 9407, open_timeout: 2, read_timeout: 5, transport: nil,
-                 socket_path: nil)
+                 socket_path: nil, admin_timeout: ADMIN_TIMEOUT_SECONDS)
     @host = host
     @port = port
     @open_timeout = open_timeout
     @read_timeout = read_timeout
     @transport = transport
+    @admin_timeout = admin_timeout
     # The /admin/* surface is Unix-socket only (privileged); admin calls go over the socket, not TCP.
     @socket_path = socket_path || File.join(ENV["SIDECAR_RUN_DIR"] || "/home/ubuntu/atomspace-run", "sidecar.sock")
   end
@@ -209,19 +214,14 @@ class SidecarClient
 
   # Admin (Unix-socket) POST. Honors the injected transport in tests; else minimal HTTP/1.0 over the
   # UNIX socket (the sidecar serves wsgiref on AF_UNIX -- HTTP/1.0 + Connection: close => read to EOF),
-  # mirroring Lane C's SidecarReadClient transport.
+  # mirroring Lane C's SidecarReadClient transport. A stalled sidecar raises DeadlineExceeded, a
+  # Timeout::Error, which quarantine_card_scoped_atoms maps to QuarantineError.
   def admin_post(path, body_hash)
     return @transport.call(path, body_hash) if @transport
 
-    sock = UNIXSocket.new(@socket_path)
-    payload = JSON.generate(body_hash)
-    sock.write("POST #{path} HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\n" \
-               "Content-Length: #{payload.bytesize}\r\nConnection: close\r\n\r\n#{payload}")
-    raw = sock.read.to_s
-    head, _, json_body = raw.partition("\r\n\r\n")
-    [head[%r{\AHTTP/\d\.\d (\d+)}, 1].to_i, safe_parse(json_body)]
-  ensure
-    sock&.close
+    status, json_body = SidecarUnixHttp.exchange(@socket_path, :post, path, JSON.generate(body_hash),
+                                                 timeout: @admin_timeout)
+    [status, safe_parse(json_body)]
   end
 
   def post(path, body_hash)
