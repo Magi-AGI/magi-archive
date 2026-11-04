@@ -181,6 +181,24 @@ To re-enable, keep agents off until one of these is done:
 - **(a)** a coordinated rebuild; or
 - **(b)** `coverage_gap = 0` after `rake atomspace_mirror:remediate_hook_lag` (repeat until zero) **and** a stable sweep with zero drift.
 
+## MCP connectors
+
+The AtomSpace tools live on their own surfaces, never on the public tool list: `POST /atomspace/mcp` on the MCP service, and `bin/mcp-server-atomspace` over stdio.
+
+| Situation | HTTP | Stdio |
+|---|---|---|
+| No valid session | `401` with OAuth discovery | Not applicable |
+| Deck reachable, no read scope | `403` | Zero tools |
+| Deck unreachable | `503` with `Retry-After` | `tools/list` is a JSON-RPC error; `tools/call` is a tool error saying to retry |
+| `GET` on the route | `405`; the route is POST-only | Not applicable |
+
+- **Grant changes take effect at the next token.** A token keeps the scopes it was minted with. The gem refreshes it about 5 minutes before expiry, so a removed grant takes up to `MCP_TOKEN_TTL` minus 5 minutes to reach a running session, and the deck enforces the same token until then. A stdio process picks up the change without a restart.
+- **`subscribe` is not implemented.** It returns a structured 501. Poll with `wait_for_event_id` instead.
+
+The sidecar's Unix socket calls have deadlines: 10 seconds for a read (`SIDECAR_READ_TIMEOUT_SECONDS`) and 30 seconds for a quarantine. A sidecar that stops answering gives `503` on reads and a recorded failure on quarantine. Raise the read deadline only if R8 measures legitimate reads near it.
+
+The sidecar refuses to start if its run directory still has any "other" permission bits after `chmod`, for example a directory root pre-created as `0755`. Fix the directory's owner or mode; do not widen `SIDECAR_RUN_DIR_MODE`.
+
 ## Read-your-writes limits
 
 `wait_for_event_id` reveals a status only for a card the caller can read. An unreadable card and a nonexistent event look the same, including timing. So **waiting on a deleted card's event returns `503 staleness_timeout` for everyone**, because trash is not fetchable; this is expected. MCP write APIs expose `act_id`, not `card_actions.id`, so clients may not be able to construct these event ids yet.
