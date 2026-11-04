@@ -269,6 +269,7 @@ RSpec.describe "AtomSpace L9 Magi security", type: :request do
 
     it "makes a private event indistinguishable from a nonexistent one for every status" do
       missing = "decko:action:999999999"
+      ryw(open_card, missing) # the first request in a process is slower; do not time it
       missing_time = ryw(open_card, missing)
       missing_status = response.status
       missing_body = body.merge("event_id" => "X")
@@ -371,6 +372,69 @@ RSpec.describe "AtomSpace L9 Magi security", type: :request do
       get "/api/mcp/atomspace_mirror/get_card_atom", params: { card_id: 1 },
                                                      headers: auth(sub: "key:deadbeef", role: "admin")
       expect(response).to have_http_status(:forbidden)
+    end
+  end
+
+  describe "B-3 no MCP state survives a halted request" do
+    before { seed_service_accounts }
+
+    # Card::Auth.current_id reads back as AnonymousID when unset, so check the stored value too.
+    def expect_clean_state
+      expect(Thread.current[:mcp_api_request]).to be_nil
+      expect(Card::Auth.instance_variable_get(:@current_id)).to be_nil
+      expect(Card::Auth.current_id).to eq(Card::AnonymousID)
+    end
+
+    it "clears it after a 403 key: admin rejection" do
+      get "/api/mcp/atomspace_mirror/atom_types", headers: auth(sub: "key:deadbeef", role: "admin", scope: "#{READ} #{QADMIN}")
+      expect(response).to have_http_status(:forbidden)
+      expect(body["error"]).to eq("principal_not_permitted")
+      expect_clean_state
+    end
+
+    it "clears it after a 401 with no token" do
+      get "/api/mcp/atomspace_mirror/atom_types"
+      expect(response).to have_http_status(:unauthorized)
+      expect_clean_state
+    end
+
+    it "clears it after a real user lacks the read scope" do
+      get "/api/mcp/atomspace_mirror/atom_types", headers: auth(scope: nil)
+      expect(response).to have_http_status(:forbidden)
+      expect_clean_state
+    end
+
+    it "clears it after a real user lacks the quarantine scope" do
+      get "/api/mcp/atomspace_mirror/quarantine/card/5", headers: auth
+      expect(response).to have_http_status(:forbidden)
+      expect_clean_state
+    end
+
+    it "clears it after a refused quarantine delete" do
+      with_env("ATOMSPACE_QUARANTINE_DELETE_ENABLED" => nil) do
+        post "/api/mcp/atomspace_mirror/quarantine/card/5/delete", headers: auth(scope: "#{READ} #{QADMIN}")
+      end
+      expect(response).to have_http_status(:forbidden)
+      expect_clean_state
+    end
+
+    it "clears it after the 503 readiness gate halts" do
+      allow(Atomspace::MirrorReadiness).to receive(:check)
+        .and_return(Atomspace::MirrorReadiness::Result.new(ready: false, reason: "mirroring_disabled"))
+      get "/api/mcp/atomspace_mirror/atom_types", headers: auth
+      expect(response).to have_http_status(:service_unavailable)
+      expect_clean_state
+    end
+
+    it "clears it after a request that succeeds, and after one that raises" do
+      get "/api/mcp/atomspace_mirror/atom_types", headers: auth
+      expect(response).to have_http_status(:ok)
+      expect_clean_state
+
+      allow(Atomspace::ReadClient).to receive(:for).and_raise(Atomspace::ServiceUnavailable, "down")
+      get "/api/mcp/atomspace_mirror/atom_types", headers: auth
+      expect(response).to have_http_status(:service_unavailable)
+      expect_clean_state
     end
   end
 

@@ -20,6 +20,11 @@ module Api
     class AtomspaceMirrorController < BaseController
       include AtomspaceReadFilter
 
+      # BaseController clears the MCP thread flag and Card::Auth in an after_action, which Rails skips
+      # when a before_action halts. Every gate below can halt, so this must wrap the whole chain,
+      # including BaseController's own filters.
+      prepend_around_action :clear_mcp_state_after_request
+
       # Magi (SPEC 8.3): only a real named user may use this surface. Runs before every other gate, so
       # a role-fallback account from BaseController#find_mcp_account never acts as the ACL principal.
       before_action :require_user_principal!
@@ -118,6 +123,12 @@ module Api
       end
 
       private
+
+      def clear_mcp_state_after_request
+        yield
+      ensure
+        clear_mcp_thread_flag
+      end
 
       def read_client
         @read_client ||= Atomspace::ReadClient.for(account: @current_mcp_account)
