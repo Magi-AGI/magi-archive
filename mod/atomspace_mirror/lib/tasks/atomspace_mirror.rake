@@ -22,7 +22,9 @@ namespace :atomspace_mirror do
   desc "Run the singleton forward-drain worker loop (Level 8 / Section 10). Long-running; systemd ExecStart."
   task drain: :environment do
     $stdout.sync = true
-    worker = DrainWorker.new
+    # One /apply can take far longer than SidecarClient's 5 s default at a large corpus, like the drift sweep's reads.
+    read_timeout = ENV["ATOMSPACE_DRAIN_READ_TIMEOUT"].to_s
+    worker = read_timeout.empty? ? DrainWorker.new : DrainWorker.new(sidecar: SidecarClient.new(read_timeout: Integer(read_timeout)))
     %w[INT TERM].each { |sig| Signal.trap(sig) { worker.stop } }
     puts "[atomspace_mirror] drain worker starting (pid=#{Process.pid})"
     worker.drain_loop

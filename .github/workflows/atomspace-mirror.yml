@@ -28,4 +28,5 @@ jobs:
           spec/atomspace_mirror/mirror_outbox_writer_spec.rb spec/atomspace_mirror/mirror_spec.rb
           spec/atomspace_mirror/reconcile_runner_spec.rb spec/atomspace_mirror/reconciler_spec.rb
           spec/atomspace_mirror/sidecar_client_spec.rb spec/atomspace_mirror/sidecar_unix_http_spec.rb
-          spec/mcp_api/atomspace/sidecar_read_client_deadline_spec.rb --format progress
+          spec/mcp_api/atomspace/sidecar_read_client_deadline_spec.rb spec/atomspace_mirror/drain_read_timeout_spec.rb
+          spec/atomspace_mirror/encoder_given_card_spec.rb --format progress

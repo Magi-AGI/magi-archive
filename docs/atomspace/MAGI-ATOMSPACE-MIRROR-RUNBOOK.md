@@ -83,7 +83,7 @@ RAILS_ENV=production bundle exec rake mirror_refresh:acl_audit           # read-
 RAILS_ENV=production REPAIR=1 bundle exec rake mirror_refresh:acl_audit  # repairs mismatches, re-audits
 ```
 
-It exits non-zero unless clean, and repair creates no card actions. **Grant no AtomSpace scope until it is clean.** While grants are active, **re-run it after any `+*read` rule save**: the `permission_propagation` mod's `*right` branch does not repair descendants. If `*right`-governed cards are wrong, hard stop: no grant beyond the owner's admin principal until repaired.
+It exits non-zero unless clean, and repair creates no card actions. The audit also compares the rule on the cached copy, because every read goes through `Card.fetch`, and repair expires the card. Columns alone can look clean while the old rule is still enforced. **Grant no AtomSpace scope until it is clean.** While grants are active, **re-run it after any `+*read` rule save**: the `permission_propagation` mod's `*right` branch does not repair descendants. If `*right`-governed cards are wrong, hard stop: no grant beyond the owner's admin principal until repaired.
 
 ## Host trust boundary
 
@@ -99,7 +99,7 @@ docker ps --format '{{.Names}}' | xargs -r docker inspect --format '{{.Name}} {{
 
 DEV controls:
 - Sidecar as `atomspace:atomspace`; `ubuntu` in group `atomspace`; run dir `0750`; socket `0660`.
-- An iptables `owner` rule on `127.0.0.1:9407` admitting only the `ubuntu` and `atomspace` UIDs. The MCP host allowlist does not protect this port.
+- An iptables `owner` rule on `127.0.0.1:9407` admitting only the `ubuntu`, `atomspace` and root UIDs. On a host with ufw, insert it above the ufw jumps (`iptables -I`), because ufw accepts all loopback traffic first. It does not survive a reboot. Host-network containers running as root pass it. The MCP host allowlist does not protect this port.
 
 **Honest limit: this is not a boundary against other processes running as `ubuntu`.** They inherit the group and already hold the DB credentials. If they tamper with the Space, forged atoms may be served until a sweep finds them. Postgres is unaffected. **Activation is prohibited where untrusted code shares the deck's UID.**
 
@@ -195,7 +195,7 @@ The AtomSpace tools live on their own surfaces, never on the public tool list: `
 - **Grant changes take effect at the next token.** A token keeps the scopes it was minted with. The gem refreshes it about 5 minutes before expiry, so a removed grant takes up to `MCP_TOKEN_TTL` minus 5 minutes to reach a running session, and the deck enforces the same token until then. A stdio process picks up the change without a restart.
 - **`subscribe` is not implemented.** It returns a structured 501. Poll with `wait_for_event_id` instead.
 
-The sidecar's Unix socket calls have deadlines: 10 seconds for a read (`SIDECAR_READ_TIMEOUT_SECONDS`) and 30 seconds for a quarantine. A sidecar that stops answering gives `503` on reads and a recorded failure on quarantine. Raise the read deadline only if R8 measures legitimate reads near it.
+The sidecar's Unix socket calls have deadlines: 10 seconds by default for a read (`SIDECAR_READ_TIMEOUT_SECONDS`; the dev host at 27,000 atoms needs 60) and 30 seconds for a quarantine. The drain's read timeout is `ATOMSPACE_DRAIN_READ_TIMEOUT` in `/etc/atomspace-mirror.env` (the client default is 5 seconds; the dev host needs 120), because one apply is two full scans of the Space. A sidecar that stops answering gives `503` on reads and a recorded failure on quarantine. Raise the read deadline only if R8 measures legitimate reads near it.
 
 The sidecar refuses to start if its run directory still has any "other" permission bits after `chmod`, for example a directory root pre-created as `0755`. Fix the directory's owner or mode; do not widen `SIDECAR_RUN_DIR_MODE`.
 
