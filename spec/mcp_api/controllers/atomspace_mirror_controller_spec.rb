@@ -52,7 +52,7 @@ RSpec.describe Api::Mcp::AtomspaceMirrorController, type: :request do
     around { |example| Card::Auth.as("Anonymous") { example.run } }
 
     def stub_card(id, readable:)
-      allow(Card).to receive(:fetch).with(id).and_return(double("card", "ok?" => readable))
+      allow(Card).to receive(:fetch).with(id).and_return(double("card", "ok?" => readable, "new_card?" => false, read_rule_id: 10))
     end
 
     def run(atoms)
