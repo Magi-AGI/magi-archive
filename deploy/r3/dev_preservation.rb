@@ -149,6 +149,19 @@ def create_fresh(entry, map, skipped)
   stop("a recreated card landed on an occupied id") if OCCUPIED_IDS.cover?(card.id)
 end
 
+# Nav cards such as *sidebar exist on every deck, so skipping existing names would lose the dev deck's own. They keep the
+# id they have on the staged copy and take the dev content, through the app layer.
+def restore_nav(entry, map, skipped, nav_updated)
+  card = Card[entry["name"]]
+  return create_fresh(entry, map, skipped) unless card
+
+  stop("a nav card has a different type on the staged copy") unless card.type_name.to_s == entry["type"]
+  return if card.db_content == entry["content"]
+
+  card.update!(content: entry["content"])
+  nav_updated << card.id
+end
+
 def create_account(entry, map, skipped)
   if Card[entry["name"]]
     skipped << entry["old_id"]
@@ -188,9 +201,13 @@ end
 def recreate_all(bundle, map, skipped)
   bot do
     # Parents before children: a compound name needs its left part first.
-    entries = (bundle["docs"] + bundle["nav"]).sort_by { |e| e["name"].count("+") }
-    entries.each { |e| create_fresh(e, map, skipped) }
+    nav_updated = []
+    nav_names = bundle["nav"].map { |e| e["name"] }
+    (bundle["docs"] + bundle["nav"]).sort_by { |e| e["name"].count("+") }.each do |e|
+      nav_names.include?(e["name"]) ? restore_nav(e, map, skipped, nav_updated) : create_fresh(e, map, skipped)
+    end
     bundle["accounts"].each { |e| create_account(e, map, skipped) }
+    puts "NAV updated=#{nav_updated.size} ids=#{nav_updated.sort.join(',')}"
   end
   missing = map.values.reject { |id| Card.where(id: id).exists? }
   stop("recreated cards are missing: #{missing.size}") unless missing.empty?

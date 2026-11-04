@@ -3,7 +3,8 @@
 #
 # It finds records structurally and never scans card content:
 #   - the right part's codename (password, salt, api_key, ...), or a star-setting key matched by an anchored regex;
-#   - every descendant of "MCP OAuth Clients", whose records hold encrypted client passwords;
+#   - every descendant of "MCP OAuth Clients", whose records hold encrypted client passwords, and of "MCP API Keys", whose
+#     records hold key hashes and key holders' details (a prod key hash would authenticate on the copy);
 #   - the users table's credential columns, which it sets to NULL.
 # A plain-named right part such as "Token" can be ordinary wiki content, so it is never blanked automatically. It is
 # reported as a suspect, and --apply refuses until an operator has reviewed them and sets R3_SUSPECTS_REVIEWED=1.
@@ -35,14 +36,14 @@ CREATE TEMP TABLE r3_secret ON COMMIT DROP AS
   JOIN cards r ON r.id = c.right_id
   WHERE r.codename IN ('password', 'salt', 'api_key', 'token', 'reset_token')
      OR r.key ~ '^\*(api_keys?|oauth[a-z_]*|client_secrets?|secrets?|tokens?|credentials?)\$';
--- OAuth client records are "MCP OAuth Clients+<client_id>". Matched on the stored name of that one simple card.
+-- OAuth client and API key records live under one simple card each. Matched on its stored name.
 INSERT INTO r3_secret (id, right_key)
   WITH RECURSIVE tree AS (
-    SELECT c.id FROM cards c JOIN cards p ON p.id = c.left_id WHERE lower(p.name) = 'mcp oauth clients'
+    SELECT c.id FROM cards c JOIN cards p ON p.id = c.left_id WHERE lower(p.name) IN ('mcp oauth clients', 'mcp api keys')
     UNION
     SELECT c.id FROM cards c JOIN tree t ON c.left_id = t.id
   )
-  SELECT id, '<under MCP OAuth Clients>' FROM tree WHERE id NOT IN (SELECT id FROM r3_secret);
+  SELECT id, '<under MCP OAuth Clients or MCP API Keys>' FROM tree WHERE id NOT IN (SELECT id FROM r3_secret);
 -- Plain-named look-alikes: reported, never blanked here. Only the fixed words of this regex can ever be printed.
 CREATE TEMP TABLE r3_suspect ON COMMIT DROP AS
   SELECT c.id, r.key AS right_key

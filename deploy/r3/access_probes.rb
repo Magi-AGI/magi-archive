@@ -80,6 +80,11 @@ check "no unsanitized account email remains outside the recreated accounts",
                  "WHERE c.right_id IN (SELECT id FROM cards WHERE codename = 'email') " \
                  "AND l.right_id IN (SELECT id FROM cards WHERE codename = 'account') " \
                  "AND c.db_content !~ '^sanitized\\+[0-9]+@invalid\\.invalid$' AND c.left_id NOT IN (#{fresh_accounts})").zero?
+check "no credential container holds a value",
+      count.call("WITH RECURSIVE tree AS (SELECT c.id, c.db_content FROM cards c JOIN cards p ON p.id = c.left_id " \
+                 "WHERE lower(p.name) IN ('mcp oauth clients', 'mcp api keys') " \
+                 "UNION ALL SELECT k.id, k.db_content FROM cards k JOIN tree t ON k.left_id = t.id) " \
+                 "SELECT count(*) FROM tree WHERE coalesce(db_content, '') <> ''").zero?
 check "no users row holds a credential",
       count.call("SELECT count(*) FROM users WHERE crypted_password IS NOT NULL OR salt IS NOT NULL OR password_reset_code IS NOT NULL OR email IS NOT NULL").zero?
 

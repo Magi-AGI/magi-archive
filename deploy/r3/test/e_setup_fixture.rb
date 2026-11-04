@@ -7,6 +7,8 @@ Card::Auth.as_bot do
   Card.create!(name: "Administrator+R3 Fixture Doc", type: "RichText", content: "fixture doc")
   Card.create!(name: "Administrator+R3 Fixture Doc+Child", type: "PlainText", content: "fixture child")
   Card.create!(name: "R3 Fixture Nav", type: "PlainText", content: "fixture nav")
+  # A nav card that also exists on the staged copy, with different content there.
+  Card.fetch("*title").update!(content: "fixture dev title")
   Card.create!(name: "R3 Fixture User", type_id: Card::UserID,
                subcards: { "+*account" => { "+*email" => "fixture-user@example.invalid", "+*password" => "R3-Fixture-#{SecureRandom.hex(16)}aA1!", "+*status" => "active" } })
   # A role membership, so restore's role path runs too. "Shark" is a role in the seed data.

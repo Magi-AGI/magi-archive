@@ -20,6 +20,11 @@ cd "$R3_APP_DIR" || r3_die "no such app directory"
 # The refresh requires a dormant mirror. These scripts must not write outbox rows, so the gate is forced off here.
 unset ATOMSPACE_MIRRORING_ENABLED
 export RAILS_ENV="${RAILS_ENV:-production}"
+# G-CACHE. Cardio.database is read from database.yml, so the DATABASE_URL set below moves the
+# connection but NOT the Rails cache namespace: without this these staged-DB scripts would read and
+# write the LIVE deck's shared cache. Verified in card-1.110.0 (lib/cardio.rb:44,
+# lib/card/cache/shared_class.rb:15, lib/card/cache/class_methods.rb:106).
+export NO_RAILS_CACHE=true
 
 case "$STEP" in
   capture)

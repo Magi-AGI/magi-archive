@@ -70,6 +70,16 @@ Q "WITH o AS (INSERT INTO cards (name, key, db_content, trash, type_id, creator_
      SELECT t.id, k.id, 'x', false, c.type_id, c.creator_id, c.updater_id, now(), now() FROM t, k, cards c WHERE false
      UNION ALL
      SELECT k.id, t.id, 'ordinary wiki text', false, c.type_id, c.creator_id, c.updater_id, now(), now() FROM t, k, cards c WHERE c.codename='account'"
+Q "WITH o AS (INSERT INTO cards (name, key, db_content, trash, type_id, creator_id, updater_id, created_at, updated_at)
+     SELECT 'MCP API Keys','mcp_api_key','',false,type_id,creator_id,updater_id,now(),now() FROM cards WHERE codename='account' RETURNING id),
+   k AS (INSERT INTO cards (name, key, db_content, trash, type_id, creator_id, updater_id, created_at, updated_at)
+     SELECT 'madeupkey','madeupkey','',false,type_id,creator_id,updater_id,now(),now() FROM cards WHERE codename='account' RETURNING id),
+   h AS (INSERT INTO cards (name, key, db_content, trash, type_id, creator_id, updater_id, created_at, updated_at)
+     SELECT 'key_hash','key_hash','',false,type_id,creator_id,updater_id,now(),now() FROM cards WHERE codename='account' RETURNING id),
+   row AS (INSERT INTO cards (left_id, right_id, db_content, trash, type_id, creator_id, updater_id, created_at, updated_at)
+     SELECT o.id, k.id, 'made-up-key-row', false, c.type_id, c.creator_id, c.updater_id, now(), now() FROM o, k, cards c WHERE c.codename='account' RETURNING id)
+   INSERT INTO cards (left_id, right_id, db_content, trash, type_id, creator_id, updater_id, created_at, updated_at)
+     SELECT row.id, h.id, 'made-up-key-hash', false, c.type_id, c.creator_id, c.updater_id, now(), now() FROM row, h, cards c WHERE c.codename='account'"
 echo "fixture counts: password cards with a value=$(Q "SELECT count(*) FROM cards c JOIN cards r ON r.id=c.right_id WHERE r.codename='password' AND coalesce(c.db_content,'')<>''") users=$(Q "SELECT count(*) FROM users")"
 
 export R3_LOCAL_TEST=1 R3_STAGED_DB=impl6_r3_staged
@@ -129,13 +139,14 @@ expect "sanitize apply on the disposable copy" 0 env R3_GO=$GO R3_SUSPECTS_REVIE
 echo "--- independent absence checks, not using the script's own queries"
 v=$(Q "SELECT count(*) FROM cards c JOIN cards r ON r.id=c.right_id WHERE r.codename IN ('password','salt','api_key') AND coalesce(c.db_content,'')<>''"); echo "secret values left: $v"; [ "$v" = 0 ] || { FAILS=$((FAILS+1)); echo "TEST FAIL secrets left"; }
 v=$(Q "SELECT count(*) FROM cards WHERE db_content LIKE '%made-up-oauth%'"); echo "made-up oauth values left: $v"; [ "$v" = 0 ] || { FAILS=$((FAILS+1)); echo "TEST FAIL oauth left"; }
+v=$(Q "SELECT count(*) FROM cards WHERE db_content LIKE 'made-up-key%'"); echo "made-up API key values left: $v"; [ "$v" = 0 ] || { FAILS=$((FAILS+1)); echo "TEST FAIL API key records left"; }
 v=$(Q "SELECT count(*) FROM cards WHERE db_content = 'ordinary wiki text'"); echo "look-alike kept (must be 1): $v"; [ "$v" = 1 ] || { FAILS=$((FAILS+1)); echo "TEST FAIL look-alike was blanked"; }
 v=$(Q "SELECT count(*) FROM users WHERE crypted_password IS NOT NULL OR salt IS NOT NULL OR email IS NOT NULL OR login IS NOT NULL"); echo "users credential columns set: $v"; [ "$v" = 0 ] || { FAILS=$((FAILS+1)); echo "TEST FAIL users"; }
 v=$(Q "SELECT count(*) FROM sessions"); echo "sessions: $v"; [ "$v" = 0 ] || { FAILS=$((FAILS+1)); echo "TEST FAIL sessions"; }
 
 echo; echo "################ DEV PRESERVATION"
 export R3_APP_DIR=$APP R3_PRESERVE_FILE=/tmp/r3_preserve.json R3_MAP_FILE=/tmp/r3_map.json R3_CAPTURE_DB=impl6_r3_capture
-export R3_DEV_ACCOUNTS="R3 Fixture User" R3_DEV_NAV_CARDS="R3 Fixture Nav"
+export R3_DEV_ACCOUNTS="R3 Fixture User" R3_DEV_NAV_CARDS="R3 Fixture Nav,*title"
 rm -f /tmp/r3_preserve.json /tmp/r3_map.json
 expect_out "capture without R3_DEV_ACCOUNTS refuses" 2 env -u R3_DEV_ACCOUNTS bash "$R3/run_ruby.sh" capture --dry-run
 clean_refusal 'name the dev accounts'
@@ -155,6 +166,7 @@ for w in crypted salt; do
 done
 is "capture recorded the fixture user's role" "$(python3 -c "import json; print('Shark' in json.load(open('/tmp/r3_preserve.json'))['accounts'][0]['roles'])")" True
 F1=$(fp)
+TITLE_ID=$(Q "SELECT id FROM cards WHERE key='*title'")
 echo; echo "--- restore inputs: a clean refusal, and nothing changes"
 echo 'not json{' > /tmp/r3_bad.json
 echo '["not","a","capture"]' > /tmp/r3_wrong_shape.json
@@ -183,6 +195,7 @@ has '^RESTORE created=4 skipped_existing=2 apply=true$'
 has '^mail delivery: off$'
 lacks 'from /'
 has '^reference map written: 4 entries, mode 600$'
+has '^NAV updated=1 ids='
 lacks 'R3-[0-9a-f]{48}'
 lacks 'fixture-user@example'
 is "reference map file mode" "$(stat -c %a /tmp/r3_map.json 2>/dev/null)" 600
@@ -246,6 +259,8 @@ is "nothing after the failure was created" "$(P "SELECT count(*) FROM cards WHER
 A "DROP DATABASE impl6_r3_partial_staged"
 is "restored simple cards" "$(Q "SELECT count(*) FROM cards WHERE name IN ('R3 Fixture Nav','R3 Fixture User')")" 2
 is "restored doc child" "$(Q "SELECT count(*) FROM cards WHERE db_content='fixture child'")" 1
+is "an existing nav card takes the dev content" "$(Q "SELECT db_content FROM cards WHERE key='*title'")" "fixture dev title"
+is "and keeps the id it has on the staged copy" "$(Q "SELECT id FROM cards WHERE key='*title'")" "$TITLE_ID"
 TYPE_OF="SELECT t.codename FROM cards c JOIN cards t ON t.id=c.type_id WHERE c.db_content"
 is "the source doc has a type to compare" "$([ -n "$(C "$TYPE_OF='fixture doc'")" ] && echo yes || echo no)" yes
 is "restored doc keeps the source doc's type" "$(Q "$TYPE_OF='fixture doc'")" "$(C "$TYPE_OF='fixture doc'")"
@@ -303,7 +318,7 @@ has '^PROBES FAILURES=0$'
 lacks '^FAIL '
 lacks 'from /'
 for line in 'no excluded card row remains' 'no excluded attachment remains in the store' 'no secret value remains outside the recreated accounts' \
-            'no unsanitized account email remains outside the recreated accounts' 'no users row holds a credential' \
+            'no unsanitized account email remains outside the recreated accounts' 'no users row holds a credential' 'no credential container holds a value' \
             'a sample of public cards exists' 'Anonymous can read every sampled public card' 'Anonymous cannot read any sampled restricted card' \
             'a principal named by the rule can read each restricted card' 'preserved dev account 1 exists as a User'; do
   has "^PASS $line"
@@ -324,10 +339,12 @@ SEED_PART="FROM cards c JOIN cards r ON r.id=c.right_id JOIN cards l ON l.id=c.l
 Q "UPDATE cards SET db_content='made-up-value' WHERE id=(SELECT min(c.id) $SEED_PART AND r.codename='password')"
 Q "UPDATE cards SET db_content='made-up@example.invalid' WHERE id=(SELECT min(c.id) $SEED_PART AND r.codename='email')"
 Q "UPDATE users SET crypted_password='made-up-hash'"
+Q "UPDATE cards SET db_content='made-up-value' WHERE id=(SELECT min(c.id) FROM cards c JOIN cards p ON p.id=c.left_id WHERE lower(p.name)='mcp api keys')"
 expect_out "probes FAIL on leftover credentials" 1 env R3_MANIFEST=/tmp/r3_m_ok.json bash "$R3/run_ruby.sh" probes
 has '^FAIL no secret value remains outside the recreated accounts'
 has '^FAIL no unsanitized account email remains outside the recreated accounts'
 has '^FAIL no users row holds a credential'
+has '^FAIL no credential container holds a value'
 lacks 'from /'
 lacks 'made-up'
 
