@@ -113,6 +113,27 @@ RSpec.describe "read rule resolution depends on persisted data alone" do
       end
     end
 
+    it "cold! drops a trashed row's id entry, because finding it changes what id_to_lex writes" do
+      shape = build_shape
+      described_class.isolated do
+        Card::Lexicon.name(shape.live)
+        Card::Lexicon.name(shape.twin)
+        described_class.cold!
+        store = Card::Lexicon.cache.temp.store
+        expect(store).not_to have_key(shape.twin.to_s)
+        expect(store).to have_key(shape.live.to_s)
+      end
+    end
+
+    it "prepare clears what a used card has memoized" do
+      card = Card.where(id: Card.fetch("*all+*read").id).take
+      card.include_set_modules
+      keys = card.rule_lookup_keys
+      card.instance_variable_set(:@rule_lookup_keys, ["wrong"])
+      described_class.isolated { described_class.prepare(card) }
+      expect(card.rule_lookup_keys).to eq(keys)
+    end
+
     it "isolated hands back the caller's cache objects, even when the block raises" do
       cache = Card::Cache[Card]
       expect { described_class.isolated { raise "boom" } }.to raise_error("boom")
@@ -354,6 +375,93 @@ RSpec.describe "read rule resolution depends on persisted data alone" do
         expect(report.to_h_report[:shared_cache_checked]).to be(false)
         expect(report).to be_clean
       end
+    end
+  end
+
+  describe "the grant gate, before any AtomSpace scope (Codex impl9_acl)" do
+    let(:shape) { build_shape }
+
+    def run_gate
+      require "rake"
+      Rails.application.load_tasks unless Rake::Task.task_defined?("atomspace_mirror:assert_grantable")
+      Rake::Task["atomspace_mirror:assert_grantable"].reenable
+      Rake::Task["atomspace_mirror:assert_grantable"].invoke
+    end
+
+    def stale_copy!(card_id)
+      real = columns(card_id)
+      Card.where(id: card_id).update_all(read_rule_id: open_rule_id, read_rule_class: "*all plus")
+      Card::Cache.reset_temp
+      bot { Card.fetch(card_id, skip_modules: true) }
+      Card.where(id: card_id).update_all(read_rule_id: real.first, read_rule_class: real.last)
+      Card::Cache.reset_temp
+    end
+
+    it "a clean audit that could not check the store is clean, but not grantable" do
+      report = MirrorAclAudit.audit(scope: Card.where(id: shape.child))
+      expect(report).to be_clean
+      expect(report).not_to be_grantable
+    end
+
+    it "a clean audit that checked the store is grantable" do
+      with_shared_store do
+        report = MirrorAclAudit.audit(scope: Card.where(id: shape.child))
+        expect(report).to be_grantable
+      end
+    end
+
+    it "a stale copy in the store is not grantable" do
+      with_shared_store do
+        stale_copy!(shape.child)
+        expect(MirrorAclAudit.audit(scope: Card.where(id: shape.child))).not_to be_grantable
+      end
+    end
+
+    it "the task refuses when there is no store to check" do
+      shape
+      expect { run_gate }.to raise_error(SystemExit).and output(/shared cache was not checked/).to_stderr
+    end
+
+    it "the task refuses a stale copy" do
+      with_shared_store do
+        stale_copy!(shape.child)
+        expect { run_gate }.to raise_error(SystemExit).and output(/not clean/).to_stderr
+      end
+    end
+
+    it "the task refuses a store namespaced to another database" do
+      with_shared_store do
+        allow(MirrorRuntimeGuards).to receive(:cache_namespace_database).and_return("some_other_database")
+        expect { run_gate }.to raise_error(MirrorRuntimeGuards::CacheContamination)
+      end
+    end
+
+    it "the task passes on a clean deck with a checked store" do
+      with_shared_store do
+        shape
+        expect { run_gate }.to output(/ACL grant gate holds/).to_stdout
+      end
+    end
+  end
+
+  describe "the atom read filter does not ask a placeholder" do
+    let(:filter) { Class.new { include AtomspaceReadFilter }.new }
+    let(:shape) { build_shape }
+
+    it "denies a card the lookup reports as new, where ok? would resolve the open default" do
+      placeholder = Card.new(name: "Placeholder #{SecureRandom.hex(4)}", skip_modules: true)
+      expect(filter.send(:readable_card?, placeholder)).to be(false)
+    end
+
+    it "denies a row with no cached rule, rather than resolving one" do
+      Card.where(id: shape.field).update_all(read_rule_id: nil, read_rule_class: nil)
+      Card::Cache.reset_temp
+      bot { expect(filter.send(:readable_card?, Card.fetch(shape.field))).to be(false) }
+    end
+
+    it "denies nil, and still answers for a real row" do
+      expect(filter.send(:readable_card?, nil)).to be(false)
+      bot { expect(filter.send(:readable_card?, Card.fetch(shape.child))).to be(true) }
     end
   end
 

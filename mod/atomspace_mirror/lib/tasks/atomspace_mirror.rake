@@ -5,6 +5,18 @@
 # completion). Operator runbook: ensure a FRESH (empty) sidecar Space first (Option A) -- restart the
 # sidecar before running; a failed run is marked 'failed' and must be re-run from scratch.
 namespace :atomspace_mirror do
+  desc "Refuse unless the ACL audit is clean AND the live shared store was checked. Run before setting any grant (SPEC 8.7)"
+  task assert_grantable: :environment do
+    require Rails.root.join("mod/atomspace_mirror/lib/mirror_acl_audit").to_s
+    # A store namespaced to another database would answer for the wrong deck.
+    MirrorRuntimeGuards.assert_isolated_cache!
+    result = MirrorAclAudit.audit
+    puts result.to_h_report.except(:trashed_divergence_ids).to_json
+    abort "the shared cache was not checked; run this on the deck's real cache configuration, grant no AtomSpace scope" unless result.shared_cache_checked
+    abort "ACL audit is not clean; grant no AtomSpace scope" unless result.grantable?
+    puts "ACL grant gate holds: audit clean, shared cache checked"
+  end
+
   desc "First-time bootstrap: sweep all cards into the AtomSpace sidecar Space (Section 1 / Level 4)."
   task bootstrap: :environment do
     run = Bootstrap.new.run

@@ -169,7 +169,7 @@ module Api
         row = MirrorOutbox.find_by(event_id: event_id.to_s)
         return false unless row
 
-        Card::Auth.as(@current_mcp_account.name) { Card.fetch(row.card_id)&.ok?(:read) } ? true : false
+        Card::Auth.as(@current_mcp_account.name) { readable_card?(Card.fetch(row.card_id)) }
       end
 
       # Release the AR connection back to the pool across the RYW poll sleep so polling can't starve

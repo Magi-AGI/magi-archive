@@ -30,6 +30,7 @@ module MirrorReadRuleResolver
 
   # Runs the block on a private, temporary-only cache set, then puts the caller's caches back untouched.
   def isolated
+    @trashed_ids = nil
     saved_shared = Card::Cache.instance_variable_get(:@shared_cache)
     saved_caches = Card::Cache.instance_variable_get(:@cache_by_class)
     Card::Cache.instance_variable_set(:@shared_cache, false)
@@ -38,24 +39,33 @@ module MirrorReadRuleResolver
   ensure
     Card::Cache.instance_variable_set(:@shared_cache, saved_shared)
     Card::Cache.instance_variable_set(:@cache_by_class, saved_caches)
+    @trashed_ids = nil
+  end
+
+  # Lexicon keys of the trashed rows, read once per isolated run.
+  def trashed_ids
+    @trashed_ids ||= Card.where(trash: true).pluck(:id).to_set(&:to_s)
   end
 
   # Empties what a lookup can get wrong: every cached card and placeholder, and every lex => id entry. Inside isolated,
   # that is everything a resolution reads, apart from two things kept for speed because no lookup can distort them:
-  #   - the id => name or lex entries, each of which restates one row. The poison is only ever in the "L-" direction.
+  #   - the id => name or lex entries of live rows, each of which restates one row. A trashed row's entry goes too: finding
+  #     it decides whether id_to_lex rewrites the lex, so keeping it would let scan order reach a trashed row's answer.
   #   - the RULES table, built by one query over the rule rows (lib/card/rule/cache.rb), and reloaded for no other reason.
   def cold!
     rules_key = Card::Rule::Cache.cache_key
     rules = Card.cache.temp.read(rules_key)
     lexicon = Card::Lexicon.cache.temp
     Card::Cache.cache_by_class.each_value { |cache| cache.temp.reset unless cache.temp.equal?(lexicon) }
-    lexicon.store.delete_if { |key, _value| key.start_with?(LEX_TO_ID_PREFIX) }
+    trashed = trashed_ids
+    lexicon.store.delete_if { |key, _value| key.start_with?(LEX_TO_ID_PREFIX) || trashed.include?(key) }
     Card.cache.temp.store[rules_key] = rules if rules
   end
 
   # Ready for a resolution from a cold cache. Call inside isolated, on a card loaded from its row.
   def prepare(card)
     cold!
+    card.reset_patterns
     card.include_set_modules
     card
   end

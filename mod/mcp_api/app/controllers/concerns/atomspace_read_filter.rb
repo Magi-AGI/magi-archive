@@ -16,8 +16,16 @@ module AtomspaceReadFilter
         ids = atom.associated_card_ids
         next false if ids.empty? || ids.any?(&:nil?)
 
-        ids.all? { |cid| (card = Card.fetch(cid)) ? card.ok?(:read) : false }
+        ids.all? { |cid| readable_card?(Card.fetch(cid)) }
       end
     end
+  end
+
+  # An atom names a real row. A placeholder or a row with no cached rule would make ok_to_read? resolve the rule again, in
+  # a cache state that can yield the open default, so those are denied rather than asked.
+  def readable_card?(card)
+    return false if card.nil? || card.new_card? || card.read_rule_id.blank?
+
+    card.ok?(:read)
   end
 end

@@ -19,6 +19,10 @@ module MirrorAclAudit
                       :shared_cache_checked, keyword_init: true) do
     def clean? = mismatched_ids.empty? && stale_fetch_ids.empty? && error_ids.empty?
 
+    # The bar for granting AtomSpace scope on a running deck. clean? alone can describe an offline data audit, where the
+    # shared store was deliberately out of reach. A grant also needs the copies readers are served to have been checked.
+    def grantable? = clean? && shared_cache_checked == true
+
     # Everything repair! has to touch, including rows whose columns are right but whose cached copy is not.
     def repair_ids = mismatched_ids | stale_fetch_ids
 
