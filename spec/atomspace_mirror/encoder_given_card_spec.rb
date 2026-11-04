@@ -5,6 +5,7 @@
 # covers the real hook. STANDALONE: no Decko boot.
 
 require "ostruct"
+require "active_support/core_ext/object/blank"
 require_relative "../../mod/atomspace_mirror/lib/card_atom_encoder"
 
 RSpec.describe CardAtomEncoder, ".encode with a given card" do
