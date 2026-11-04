@@ -6,9 +6,18 @@ namespace :mirror_refresh do
   # Every stage that may be pointed at a staged copy isolates its own cache first and says so, instead
   # of trusting the caller to have exported NO_RAILS_CACHE.
   def isolate_refresh_cache!
+    # Layer one is the pre-boot guard in the deck Rakefile, which sets NO_RAILS_CACHE before
+    # config/application is required, so initialization itself never touches the live shared store.
+    # Reported here because only the task body can emit it, and the ordering is the safety property:
+    # shared_cache_at_boot=off means the cache was already disabled when Decko finished booting,
+    # i.e. BEFORE this helper ran. Layer two is everything below.
+    at_boot = MirrorRuntimeGuards.shared_cache_live? ? "on" : "off"
+    ns_at_boot = MirrorRuntimeGuards.cache_namespace_database
+    preboot = ENV.fetch("MIRROR_REFRESH_PREBOOT_CACHE_GUARD", "absent")
     ns = MirrorRuntimeGuards.isolate_cache!
     puts "cache isolated: shared_cache=#{MirrorRuntimeGuards.shared_cache_live? ? 'on' : 'off'} " \
-         "namespace_db=#{ns} connected_db=#{MirrorRuntimeGuards.connected_database}"
+         "namespace_db=#{ns} connected_db=#{MirrorRuntimeGuards.connected_database} " \
+         "shared_cache_at_boot=#{at_boot} namespace_db_at_boot=#{ns_at_boot} preboot_guard=#{preboot}"
   end
 
   desc "Refuse a DB refresh unless the mirror is dormant and its tables are absent (SPEC 7.3)"
