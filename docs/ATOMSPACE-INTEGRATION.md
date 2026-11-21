@@ -1,5 +1,11 @@
 # Atomspace Integration Architecture
 
+> **Prototype successor:** this 2025 roadmap is historical. The implemented
+> read-only Decko/STORE/CLIENT path, evidence limits and consolidation prerequisites
+> are documented in [I3 VIEW prototype closeout](atomspace/I3-VIEW-PROTOTYPE-CLOSEOUT.md).
+> The prototype does not replace PostgreSQL or implement this roadmap's reasoning
+> and alternative-backend phases.
+
 **Project**: magi-archive Hyperon Atomspace Backend
 **Timeline**: Phase 3-4 (Month 3-9, 2026)
 **Status**: Future/Experimental
