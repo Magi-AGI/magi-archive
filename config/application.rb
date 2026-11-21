@@ -112,6 +112,83 @@ module MagiArchive
     #
     # config.relative_url_root = "/mydeck"
 
+    # ===========================================================================================
+    # TLS / TRANSPORT POLICY -- SECURITY-HARDENING SUBSCOPE (separately approvable, see below)
+    # ===========================================================================================
+    #
+    # These three settings change TLS and redirect behaviour for the WHOLE deck, not just the I3
+    # surface, so each is DEFAULT-ON BUT ENV-REVERSIBLE and each rollback is a single env flip plus
+    # a restart -- no code change. Companion pieces:
+    #   * mod/mcp_api/lib/atomspace/original_protocol_evidence.rb  (pre-rewrite evidence capture)
+    #   * config/initializers/i3_transport_evidence.rb             (inserts it before AssumeSSL)
+    #   * config/initializers/session_store.rb                     (SESSION_COOKIE_SECURE)
+    #
+    # GUARDS KEY OFF EXPLICIT ENV VARS, NEVER Rails.env. The server here is Thin 2.0.1 and
+    # config/puma.rb:10 is `environment ENV["RACK_ENV"] || "development"`, so RACK_ENV/Rails.env is
+    # NOT a reliable indicator of whether this process is the internet-facing one. Keying TLS
+    # policy off it would mean a production deploy that forgot RACK_ENV silently runs with TLS
+    # enforcement off. Explicit vars cannot drift that way.
+
+    # ASSUME_SSL. Tells Rails the request arrived over TLS even though the origin hop is cleartext
+    # -- required for correct absolute URLs, redirects and `Secure` cookies behind a TLS-
+    # terminating proxy.
+    #
+    # READ THIS BEFORE TREATING IT AS A SECURITY CONTROL: `assume_ssl` trusts the forwarded
+    # protocol **UNCONDITIONALLY**. It does not consult a trusted-proxy list, and there is no
+    # option to make it. So under Cloudflare Flexible SSL, an attacker who can reach the origin
+    # DIRECTLY in cleartext is ALSO treated as HTTPS by Rails. Nothing in this file or in the I3
+    # middleware changes that for the deck at large; the I3 surface defends itself by reading
+    # pre-rewrite evidence plus a trusted-proxy allowlist, but the rest of the deck does not.
+    #
+    # THE REAL FIX IS INFRASTRUCTURE, NOT CODE, and is explicitly NOT closed here:
+    #   (1) Cloudflare SSL/TLS mode -> Full (Strict) so the Cloudflare->origin hop is TLS, and
+    #   (2) an origin firewall restricted to Cloudflare's published IP ranges, and
+    #   (3) any directly-reachable origin port closed.
+    # OWNER ACTION. Also NEEDS-CONFIRMATION: the actual proxy topology and TLS termination point
+    # for dev-wiki.magi-agi.org is not established from this repo and is not assumed here.
+    config.assume_ssl = ENV["ASSUME_SSL"].to_s.strip != "0"
+
+    # FORCE_SSL. Redirects http->https and marks cookies secure.
+    #
+    # HIGHEST-BLAST-RADIUS ITEM IN THIS SUBSCOPE: if the origin is genuinely reachable only over
+    # cleartext and `assume_ssl` is NOT in effect, force_ssl produces an infinite redirect loop /
+    # total lockout for every user. ROLLBACK: FORCE_SSL=0 and restart.
+    config.force_ssl = ENV["FORCE_SSL"].to_s.strip != "0"
+
+    # HSTS for one year, with subdomains and preload-eligible, plus a redirect exclusion for the
+    # health endpoints.
+    #
+    # WHY THE HEALTH EXCLUSION: an uptime/load-balancer probe hitting the cleartext health path
+    # would otherwise receive a 301 and may score that as a failure. `redirect: { exclude: }`
+    # suppresses only the REDIRECT for those paths -- it does not disable HSTS and it does not
+    # weaken the I3 gate, which is enforced independently in the controller.
+    #
+    # HSTS IS NOT TRIVIALLY REVERSIBLE: once a browser has cached max-age it will refuse plain HTTP
+    # to this host for a year regardless of server config. To actually back it out you must serve
+    # `max-age=0` for long enough for clients to re-fetch it; FORCE_SSL=0 alone does NOT undo
+    # already-cached HSTS in browsers that saw it.
+    config.ssl_options = {
+      hsts: {
+        expires: 1.year,
+        subdomains: true,
+        preload: true
+      },
+      redirect: {
+        exclude: ->(request) { request.path.start_with?("/api/mcp/health") }
+      }
+    }
+
+    # ENV VARS INTRODUCED BY THIS SUBSCOPE (all default-ON; only the literal "0" disables):
+    #   ASSUME_SSL=0                   -> stop trusting the forwarded protocol
+    #   FORCE_SSL=0                    -> stop redirecting http->https (lockout escape hatch)
+    #   SESSION_COOKIE_SECURE=0        -> restore the previous `secure: false` session cookie
+    #   I3_REQUIRE_SECURE_TRANSPORT=0  -> disable the I3 transport gate only
+    #   I3_TRUSTED_PROXY_CIDRS=<list>  -> comma/space separated CIDRs whose X-Forwarded-Proto is
+    #                                     honoured. UNSET = TRUST NOBODY = cleartext REFUSED on
+    #                                     the I3 surface. This one is fail-closed when unset, so
+    #                                     it must be SET for the I3 surface to serve behind a
+    #                                     proxy.
+
     # MISCELLANEOUS
     # You can use the following to disallow creating, updating, and deleting
     # cards:

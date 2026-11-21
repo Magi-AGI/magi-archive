@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lane E1 · live I3 read (text-only)</title>
+<!--
+  ============================================================================================
+  LIVE I3 READ — src/demo/live.html
+  ============================================================================================
+
+  WHY A SEPARATE PAGE, AND NOT A CHANGE TO index.html.
+  index.html and verify.html are byte-pinned by the stored E1 browser evidence: the saved run
+  src/demo/results/result-latest.json carries provenance.sourceHashes for index.html,
+  verify.html, server.py and the four modules, and that run (58 pass / 0 fail / 1 unknown,
+  2026-11-12) still describes the bytes on disk. Editing those files would silently invalidate
+  that evidence. So the live path lands BESIDE them and nothing already-verified is touched.
+
+  WHAT THIS PAGE IS.
+  A TEXT-ONLY live read: mode selection, the three I3 calls, the real envelope, the real counts,
+  and the real refusal. There is DELIBERATELY NO CANVAS here. The WebGPU renderer is verified by
+  verify.html against the recorded corpus, and claiming a live WebGPU verification that has not
+  been run would be exactly the kind of manufactured evidence this work exists to avoid. What
+  this page proves is the TRANSPORT and the MODE GATE, end to end, in a real browser.
+
+  TEXT AS DATA (register V07 / V09-family, not negotiable).
+  There is NO innerHTML assignment anywhere in this file and no template string is ever
+  interpolated into a markup context. Every dynamic string is written with textContent through
+  the same `setText` / `kv` helpers index.html uses. A backend-supplied string — including a 404
+  HTML body — reaches this document only as text.
+
+  NO BEARER CREDENTIALS. This page holds no token, sends no Authorization header and reads
+  nothing token-shaped from the URL, in EITHER credential branch. The branch is chosen by an
+  explicit `?credentials=` parameter and is never inferred:
+
+    ?credentials=none            (DEFAULT) `credentials: 'omit'`. No cookie, no HTTP-auth state.
+                                 The only branch allowed to address a cross-origin backend.
+    ?credentials=decko-session   `credentials: 'same-origin'`. The browser may attach the Decko
+                                 session cookie it ALREADY HOLDS for this origin, and only to a
+                                 SAME-ORIGIN backend. Every request's RESOLVED origin is checked
+                                 against this page's origin BEFORE the fetch; an off-origin one is
+                                 REFUSED and is NOT retried credential-less. No token is involved.
+
+  The session branch is NOT the deck's real auth scheme (an OAuth 2.1 RS256 per-real-user Bearer
+  JWT, LIVE-TRANSPORT.md:171-178) and does not stand in for it. It can only reuse a cookie the
+  user's browser already has, which is why it is same-origin only.
+
+  USAGE
+    python3 src/demo/server.py
+    fixture mode (unchanged default) : http://127.0.0.1:8788/src/demo/index.html
+    live mode, same origin           : http://127.0.0.1:8788/src/demo/live.html?mode=live&backend=&card=Home
+    live mode, another loopback port : .../live.html?mode=live&backend=http://127.0.0.1:9292&card=Home
+    live mode, Decko session cookie  : .../live.html?mode=live&backend=&credentials=decko-session&card=Home
+  ============================================================================================
+-->
+<style>
+  :root { --bg:#0b0d10; --fg:#e8eaed; --dim:#9aa0a6; --ok:#7ee787; --bad:#ff7b72; --line:#21262d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding:18px 22px; }
+  h1 { font-size:15px; margin:0 0 4px; font-weight:600; }
+  .tag { color:var(--dim); font-weight:400; font-size:12px; }
+  #banner { border:1px solid var(--line); border-left:3px solid var(--dim); padding:9px 12px;
+            margin:14px 0; color:var(--dim); max-width:112ch; }
+  #banner.live { border-left-color:var(--ok); }
+  #refusal { display:none; border:1px solid var(--bad); border-left-width:3px; padding:9px 12px;
+             margin:14px 0; max-width:112ch; }
+  #refusal.show { display:block; }
+  #refusal .big { color:var(--bad); font-weight:600; margin-bottom:6px; }
+  section { border:1px solid var(--line); padding:10px 12px; margin:12px 0; max-width:112ch; }
+  section > h2 { font-size:12px; margin:0 0 7px; color:var(--dim); font-weight:600;
+                 text-transform:uppercase; letter-spacing:.06em; }
+  .kv { display:grid; grid-template-columns:26ch 1fr; gap:2px 14px; }
+  .kv .k { color:var(--dim); }
+  .kv .v { word-break:break-all; white-space:pre-wrap; }
+  .note { color:var(--dim); }
+  code { color:var(--fg); }
+</style>
+</head>
+<body>
+
+<h1>Lane E1 · live I3 read <span class="tag">lookup → open → neighbours · text-only · no canvas</span></h1>
+
+<div id="banner"></div>
+<div id="refusal"><div class="big" id="refusalBig"></div><div class="kv" id="refusalBody"></div></div>
+
+<section><h2>mode</h2><div class="kv" id="modeBox"></div></section>
+<section><h2>requests actually made</h2><div class="kv" id="reqBox"></div></section>
+<section><h2>I3-10 lookup</h2><div class="kv" id="lookupBox"></div></section>
+<section><h2>I3-02 open</h2><div class="kv" id="openBox"></div></section>
+<section><h2>I3-03 neighbours</h2><div class="kv" id="neighBox"></div></section>
+<section><h2>scene (same sceneFrom the fixture path uses)</h2><div class="kv" id="sceneBox"></div></section>
+
+<script type="module">
+import { resolveDemoMode, DemoModeUnresolved, MODES } from './demo-mode.mjs';
+import {
+  createLiveTransport, realCardPath, openSceneLive, refusalLines, MODE, I3_ENDPOINTS,
+  lookupPairs, openPairs, neighboursPairs, PAYLOAD_OUTCOMES,
+} from './live-bridge.mjs';
+import { sceneFrom } from './fixture-bridge.mjs';
+import { emptyDrawnGraph, ingestOpen } from '../drawn-graph.mjs';
+
+// ------------------------------------------------- tiny text-as-data DOM helpers (as index.html)
+// The ONLY way text enters this document. No innerHTML, ever.
+const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
+const setText = (node, s) => { node.textContent = s === null || s === undefined ? '' : String(s); };
+const clear = (node) => { while (node.firstChild) node.removeChild(node.firstChild); };
+const kv = (box, k, v) => {
+  const kn = el('span', 'k'); setText(kn, k);
+  const vn = el('span', 'v'); setText(vn, v);
+  box.append(kn, vn);
+};
+const note = (box, s) => {
+  const n = el('span', 'note'); setText(n, s);
+  const pad = el('span'); setText(pad, '');
+  box.append(n, pad);
+};
+const box = (id) => document.getElementById(id);
+
+// Absent-value conventions, identical to index.html's.
+const NONE = '(none)';
+const DASH = '—';
+const show = (v) => (v === null || v === undefined ? DASH : String(v));
+
+/** Render a refusal. ALL TEXT — the pairs from refusalLines are already plain strings. */
+function refuse(err) {
+  const r = box('refusal');
+  r.classList.add('show');
+  setText(box('refusalBig'), 'LIVE READ REFUSED — nothing is drawn, and no recording is substituted');
+  const body = box('refusalBody');
+  clear(body);
+  for (const [k, v] of refusalLines(err)) kv(body, k, v);
+}
+
+/** The six envelope fields, exactly as received. Nothing is defaulted or invented. */
+function renderEnvelope(target, body, label) {
+  const b = box(target);
+  clear(b);
+  if (body === null || body === undefined) {
+    note(b, `${label} was not reached, or answered a refusal with a null body. `
+      + 'No outcome is invented for it.');
+    return;
+  }
+  kv(b, 'outcome', show(body.outcome));
+  kv(b, 'epoch', show(body.epoch));
+  kv(b, 'position', show(body.position));
+  kv(b, 'read-at', show(body['read-at']));
+  kv(b, 'schema-version', show(body['schema-version']));
+  const lim = body.limits;
+  kv(b, 'limits', lim && typeof lim === 'object' ? `${Object.keys(lim).length} keys, as received` : show(lim));
+  if (Object.prototype.hasOwnProperty.call(body, 'health')) {
+    kv(b, 'health', body.health === null ? 'present and null (absent, not fabricated)' : 'present');
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'key')) kv(b, 'key', show(body.key));
+  if (Object.prototype.hasOwnProperty.call(body, 'digest')) {
+    kv(b, 'digest', `${show(body.digest)}  (the store's own; never computed here)`);
+  }
+  if (Array.isArray(body.buckets)) {
+    kv(b, 'buckets', String(body.buckets.length));
+    for (const bk of body.buckets) {
+      kv(b, `  ${show(bk['link-type'])}`, `drawn=${bk.drawn === true}`
+        + (Array.isArray(bk.entries) ? `, ${bk.entries.length} entries` : ', no entries key'));
+    }
+  }
+  if (Array.isArray(body.entries)) kv(b, 'entries', String(body.entries.length));
+  if (Object.prototype.hasOwnProperty.call(body, 'omitted')) {
+    const om = body.omitted;
+    kv(b, 'omitted', om ? `bound=${show(om.bound)} count=${show(om.count)}` : NONE);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'cursor-stale')) {
+    kv(b, 'cursor-stale', `${show(body['cursor-stale'])}  (reported, never silently healed)`);
+  }
+}
+
+// ------------------------------------------------------------------------------------- the run
+let mode;
+try {
+  mode = resolveDemoMode(window.location.search);
+} catch (err) {
+  setText(box('banner'), 'MODE UNRESOLVED');
+  refuse(err);
+  throw err;
+}
+
+const bn = box('banner');
+setText(bn, mode.banner);
+if (mode.mode === MODES.live) bn.classList.add('live');
+
+const mb = box('modeBox');
+kv(mb, 'mode', mode.mode);
+kv(mb, 'explicitly selected', String(mode.explicit));
+kv(mb, 'fixture base', mode.fixtureBase === null ? 'none — live mode reads no recording' : mode.fixtureBase);
+kv(mb, 'backend origin', mode.backendOrigin === null ? NONE
+  : (mode.backendOrigin === '' ? "'' (this page's own origin, same-origin)" : mode.backendOrigin));
+kv(mb, 'card', show(mode.card));
+kv(mb, 'distance', show(mode.distance));
+note(mb, 'distance is sent to open AND neighbours exactly as given — the client validates its '
+  + 'format (a non-negative decimal integer) and sends it UNCLAMPED, so the value shown above is '
+  + 'the value really requested. The deck saturates at 2 on its own side. A distance that is not '
+  + 'a non-negative decimal integer makes the request malformed and is refused below; it is never '
+  + 'coerced and never reported as a store outcome.');
+kv(mb, 'bucket', show(mode.bucket));
+kv(mb, 'credential branch', mode.credentialMode);
+kv(mb, 'page origin', window.location.origin);
+if (mode.credentialMode === 'decko-session') {
+  kv(mb, 'cookie policy sent', "same-origin — the browser attaches the Decko session cookie it "
+    + 'already holds for THIS origin, and will not attach it to another origin');
+  note(mb, 'SESSION BRANCH, SAME-ORIGIN ONLY. This page holds no token and sends no Authorization '
+    + 'header; it only permits a cookie the browser already has. Every request URL is resolved '
+    + "against this page's origin and checked BEFORE it is sent: an off-origin request is REFUSED "
+    + 'and is NOT retried without the cookie, and is never answered from a recording. The check '
+    + 'is on the RESOLVED request origin, not on whether the backend field happens to be empty.');
+} else {
+  kv(mb, 'cookie policy sent', 'omit — no cookie and no HTTP-auth state, even if the browser '
+    + 'holds some for that origin');
+  note(mb, 'CREDENTIAL-LESS BRANCH (default). No token, no cookie, no Authorization header. This '
+    + 'is the only branch permitted to address a cross-origin backend.');
+}
+kv(mb, 'bearer token held by page', 'none — no token parameter exists in either branch');
+
+if (mode.mode !== MODES.live) {
+  note(box('reqBox'), 'Fixture mode makes no request. This page is the LIVE read; the recorded '
+    + 'demo is src/demo/index.html and it is unchanged.');
+  for (const id of ['lookupBox', 'openBox', 'neighBox', 'sceneBox']) {
+    note(box(id), 'Not applicable in fixture mode.');
+  }
+} else if (mode.card === null) {
+  note(box('reqBox'), 'No ?card= given, so no lookup was attempted. A card name is not invented.');
+  for (const id of ['lookupBox', 'openBox', 'neighBox', 'sceneBox']) {
+    note(box(id), 'No request was made.');
+  }
+} else {
+  const transport = createLiveTransport({
+    fetchImpl: (u, i) => window.fetch(u, i),   // injected, not reached for inside the module
+    baseUrl: mode.backendOrigin,
+    allowNonLoopback: mode.allowNonLoopback,
+    credentialMode: mode.credentialMode,
+    // The page is the only layer that knows its own origin; resolveDemoMode is pure and does not
+    // read `location`. Passing it here is what lets live-bridge check EVERY request's resolved
+    // origin against it before sending, instead of trusting an empty backend field.
+    pageOrigin: window.location.origin,
+    timeoutMs: 30000,                          // matches the deck's documented 30 s read timeout
+  });
+
+  // The URLs are shown BEFORE the attempt, so a failure can still be attributed to a real URL.
+  const rb = box('reqBox');
+  kv(rb, 'I3-10 lookup', transport.urlFor(I3_ENDPOINTS.lookup, lookupPairs({ name: mode.card })));
+  note(rb, 'open and neighbours address the participant by the KEY the lookup returns, so their '
+    + 'URLs are only known after step 1.');
+
+  try {
+    const path = await realCardPath(transport, mode.card, {
+      distance: mode.distance, bucket: mode.bucket,
+    });
+
+    renderEnvelope('lookupBox', path.lookup, 'I3-10 lookup');
+    renderEnvelope('openBox', path.open, 'I3-02 open');
+    renderEnvelope('neighBox', path.neighbours, 'I3-03 neighbours');
+
+    const nb = box('neighBox');
+    kv(nb, 'bucket chosen', path.bucket === null
+      ? 'none — this card reported no buckets, and one is not invented'
+      : `${path.bucket}  (first in the store's UTF-8 order unless pinned)`);
+    if (path.neighbours === null && path.open !== null
+        && !PAYLOAD_OUTCOMES.includes(path.open.outcome)) {
+      note(nb, `No I3-03 request was issued: the open answered "${show(path.open.outcome)}", which `
+        + `is not one of the three payload-bearing outcomes (${PAYLOAD_OUTCOMES.join(', ')}). `
+        + 'neighbours asks about a bucket of the participant the open returned, so with no '
+        + 'participant there is nothing to ask about. The open body above is reported exactly as '
+        + 'received, the absence of step 3 is reported rather than invented, and a pinned ?bucket= '
+        + 'does not override this.');
+    }
+
+    // The scene is built by the SAME sceneFrom the fixture path uses, from the SAME ingestOpen.
+    const sb = box('sceneBox');
+    if (path.open === null) {
+      note(sb, 'No open body, so no scene. Nothing is drawn and nothing is assumed.');
+    } else {
+      const graph = emptyDrawnGraph();
+      const result = ingestOpen(path.open, graph);
+      const scene = sceneFrom(graph, result);
+      kv(sb, 'outcome', scene.outcome === null ? NONE : scene.outcome);
+      kv(sb, 'contributes drawn content', String(scene.contributesDrawnContent));
+      kv(sb, 'elements', String(scene.counts.elements));
+      kv(sb, 'connections', String(scene.counts.connections));
+      kv(sb, 'buckets', String(scene.counts.buckets));
+      kv(sb, 'drawn buckets', String(scene.counts.drawnBuckets));
+      kv(sb, 'link-node connections', String(scene.counts.linkNodeConnections));
+      kv(sb, 'line connections', String(scene.counts.lineConnections));
+      kv(sb, 'arity >= 3', String(scene.counts.highArityConnections));
+      kv(sb, 'label-bearing properties', scene.labelBearingProperties
+        ? scene.labelBearingProperties.join(', ') : '(none reported)');
+      kv(sb, 'fingerprint', scene.fingerprint);
+      kv(sb, 'mode', MODE);
+      note(sb, 'No canvas on this page by design: the WebGPU renderer is verified against the '
+        + 'recorded corpus by verify.html, and a live WebGPU run has not been performed.');
+    }
+    window.__E1_LIVE_DONE = true;
+  } catch (err) {
+    refuse(err);
+    renderEnvelope('lookupBox', null, 'I3-10 lookup');
+    renderEnvelope('openBox', null, 'I3-02 open');
+    renderEnvelope('neighBox', null, 'I3-03 neighbours');
+    note(box('sceneBox'), 'No scene: the live read did not produce a store answer, and a '
+      + 'recorded response is never substituted for one.');
+    window.__E1_LIVE_DONE = true;
+    window.__E1_LIVE_REFUSED = String(err && err.message ? err.message : err);
+  }
+}
+</script>
+</body>
+</html>

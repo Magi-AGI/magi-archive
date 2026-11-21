@@ -22,6 +22,16 @@ module McpApi
     # Retained for callers that referenced the single read scope constant.
     SCOPE = READ_SCOPE
 
+    # I3 (VIEW's Decko-mounted store-read surface) carries its OWN NAMESPACED scope and its OWN
+    # allowlist, deliberately NOT a widening of mcp:atomspace:read:
+    #
+    #   I3_READ_GRANTS  "user:<name>,..."  -> mcp:i3:read
+    #
+    # The two surfaces read DIFFERENT backends (mirror Space vs record store) with different
+    # audiences, so holding one must never confer the other. There is no mcp:i3:write and no
+    # mcp:i3:admin: this module never mints a write scope for any surface.
+    I3_READ_SCOPE = "mcp:i3:read"
+
     module_function
 
     # @param principal_id [String] the JWT `sub` ("user:<name>" or "key:<id>")
@@ -29,10 +39,16 @@ module McpApi
     # @return [Array<String>]
     def scopes_for(principal_id, user_card: nil)
       return [] unless user_card.present? && principal_id.to_s.start_with?("user:")
-      return [READ_SCOPE, ADMIN_SCOPE] if admin_granted?(principal_id)
-      return [READ_SCOPE] if granted?(principal_id)
 
-      []
+      scopes = []
+      if admin_granted?(principal_id)
+        scopes.concat([READ_SCOPE, ADMIN_SCOPE])
+      elsif granted?(principal_id)
+        scopes << READ_SCOPE
+      end
+      # Independent allowlist: an I3 grant neither requires nor implies an atomspace grant.
+      scopes << I3_READ_SCOPE if i3_read_granted?(principal_id)
+      scopes
     end
 
     def granted?(principal_id)
@@ -41,6 +57,10 @@ module McpApi
 
     def admin_granted?(principal_id)
       list("ATOMSPACE_ADMIN_GRANTS").include?(principal_id.to_s)
+    end
+
+    def i3_read_granted?(principal_id)
+      list("I3_READ_GRANTS").include?(principal_id.to_s)
     end
 
     def list(env_var)

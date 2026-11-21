@@ -115,6 +115,43 @@ Decko.application.routes.draw do
                                                 constraints: { card_id: /\d+/ }, format: false
       end
 
+      # I3 read surface (VIEW, lane D) -- Api::Mcp::I3ReadController. Minimal real-card path over
+      # the STORE's I2 slice: lookup (by name) + open + neighbours, plus a declared
+      # capability-missing health refusal (the store's health slice is O23-gated and absent).
+      # Gated by the NAMESPACED mcp:i3:read scope; mcp:atomspace:read does NOT satisfy it.
+      #
+      # SAME-ORIGIN SESSION AUTHENTICATION ADDS NO ROUTE. The browser path authenticates with the
+      # EXISTING Decko session cookie on EXACTLY THESE FOUR GETs -- there is no /session endpoint,
+      # no second route family, no new query parameter and no new path. The controller selects the
+      # session principal when the request carries no Authorization header
+      # (i3_read_controller.rb#session_mode?), so the wire surface is byte-identical for both
+      # mechanisms and O25's "no new wire surface" holds. Being same-origin is also what makes the
+      # cookie reach these paths at all: the browser must be served from this same deck origin
+      # (config.deck_origin, config/application.rb), because a cross-origin fetch would neither
+      # send the SameSite=Lax cookie nor pass CORS (this deck configures none).
+      #
+      # Gated by the NAMESPACED mcp:i3:read scope on the token path; on the session path by
+      # PERSISTED Decko role membership read from the framework (I3_SESSION_READ_ROLE), never by
+      # anything the request asserts.
+      #
+      # MUST be drawn HERE, before `mount Decko::Engine => '/'`, for the same reason the
+      # atomspace_mirror block is (see :89-90): Rails.application.routes.append in a mod
+      # initializer runs AFTER the mount and is shadowed by the Decko card catch-all, so an
+      # appended route 404s to a card instead of reaching the controller.
+      scope :i3, controller: "i3_read" do
+        get 'lookup',                action: :lookup
+        get 'health',                action: :health
+        # `format: false` is REQUIRED on every id-bearing path, not cosmetic (see :104-111):
+        # Rails applies the default trailing `(.:format)` segment BEFORE the :id constraint, so
+        # without it `card/1.9` parses as id="1", format="9" -- the digit constraint passes on the
+        # TRUNCATED value and the surface SILENTLY ANSWERS FOR CARD 1 instead of rejecting an
+        # ambiguous target. Disabling the format segment makes `card/1.9` a 404 at the router.
+        get 'card/:id/open',         action: :open,
+                                     constraints: { id: /\d+/ }, format: false
+        get 'card/:id/neighbours',   action: :neighbours,
+                                     constraints: { id: /\d+/ }, format: false
+      end
+
       # Admin endpoints (admin role required)
       namespace :admin do
         resources :api_keys, only: [:index, :show, :create, :update, :destroy]
@@ -127,6 +164,61 @@ Decko.application.routes.draw do
       end
     end
   end
-  
+
+  # ==================================================================================================
+  # K8 PATH-SHAPE CONFORMANCE for the I3 read surface.
+  #
+  # CONTRACT (av-contract/contracts/k8-draft-2.md §5.1, marked EXACT):
+  #   :285  "Every endpoint is a **GET** at `/atomspace/api/<endpoint>`, and calls only read
+  #          operations of I2 (R14, `cp030` §2)."
+  #   :288  "All inputs are query parameters. No endpoint accepts a body."
+  # The endpoint NAMES come from §5.5's EXACT table (:563-574): I3-02 `open`, I3-03 `neighbours`,
+  # I3-10 `lookup`.
+  #
+  # ADDITIVE, NOT A REPLACEMENT. The pre-existing /api/mcp/i3/... routes above are left intact. K8
+  # fixes where an endpoint MUST be reachable; no clause of it says the endpoint must NOT be
+  # reachable anywhere else, so deleting the old paths would be a breaking change the contract does
+  # not ask for.
+  #
+  # PATH SHAPE ONLY. Same controller, same actions, same parameter names, same semantics. Nothing
+  # here renames a parameter into K8's `participant` / `focus[]` / `after` / `distance` vocabulary,
+  # and nothing here synthesises K8 §5.2 envelope fields (`epoch`, `position`, `read-at`,
+  # `schema-version`, `limits`): all of those would require backend data this deck cannot obtain, and
+  # fabricating any of them is forbidden (i3_read_controller.rb:45-47 -- "No handler fabricates an
+  # epoch, position, read-at, coverage, health or configuration value to be able to answer").
+  #
+  # MUST BE DRAWN HERE, before `mount Decko::Engine => '/'` below, for exactly the reason the
+  # atomspace_mirror and i3 blocks above are (see :89-90 and :123-126): the Decko card catch-all
+  # mounted at '/' matches any path the router has not already matched, so a route drawn -- or
+  # appended by a mod initializer -- AFTER the mount 404s to a card instead of reaching the
+  # controller.
+  #
+  # `format: false` ON EVERY ROUTE, and it is REQUIRED rather than cosmetic (same reasoning as
+  # :104-111 and :130-134). Rails' default trailing `(.:format)` segment would otherwise let
+  # `/atomspace/api/open.9` match with format="9", reintroducing the suffix ambiguity the id-bearing
+  # routes above exist to disable.
+  #
+  # WHERE THE CARD ID ARRIVES ON THIS SHAPE, and what stands in for the router's numeric gate.
+  # K8 :288 puts EVERY input in the query string, so here the card id arrives as `?id=<n>` instead of
+  # as a path segment. A Rails hash constraint (`constraints: { id: /\d+/ }`) CANNOT be applied to it,
+  # because hash constraints match dynamic PATH segments only. The invariant is nevertheless
+  # preserved, because it was never the router's alone: I3ReadController#require_card_id!
+  # (i3_read_controller.rb:233-239) parses the id with a strict `\A\d+\z` and renders 400
+  # `card_id_invalid` for anything else, explicitly refusing `.to_i` coercion. So `?id=1.9` is
+  # REFUSED as a malformed id and is never silently answered for card 1 -- which is precisely the
+  # property `format: false` + `/\d+/` protect on the path-segment shape.
+  #
+  # The parameter name stays `id` (the existing one). K8 §5.5 calls I3-02/I3-03's subject input
+  # `participant` and addresses it by `key`/`digest`, but this surface addresses a Decko card by its
+  # numeric id and the store has no name->key or card_id->key resolver (i3_read_controller.rb:119-127),
+  # so renaming the input would promise a resolution that does not exist. Divergence recorded, not
+  # papered over.
+  scope path: "atomspace/api" do
+    get 'lookup',     to: 'api/mcp/i3_read#lookup',     as: :atomspace_api_lookup,     format: false
+    get 'health',     to: 'api/mcp/i3_read#health',     as: :atomspace_api_health,     format: false
+    get 'open',       to: 'api/mcp/i3_read#open',       as: :atomspace_api_open,       format: false
+    get 'neighbours', to: 'api/mcp/i3_read#neighbours', as: :atomspace_api_neighbours, format: false
+  end
+
   mount Decko::Engine => '/'
 end

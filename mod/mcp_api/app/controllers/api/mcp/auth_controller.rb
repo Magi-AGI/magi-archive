@@ -221,9 +221,11 @@ module Api
           api_key_id: api_key_id,
           expires_in: token_ttl,
           # Magi (SPEC 8.3): AtomSpace scopes come only from the explicit user: allowlists in
-          # ATOMSPACE_READ_GRANTS and ATOMSPACE_ADMIN_GRANTS. No role, including Administrator,
-          # confers any, and write is never minted. The AUTHENTICATED user card is passed (not the
-          # possibly-downgraded `role` argument) so the grant follows the principal.
+          # ATOMSPACE_READ_GRANTS and ATOMSPACE_ADMIN_GRANTS, and the I3 read scope only from
+          # I3_READ_GRANTS. No role, including Administrator, confers any, and write is never
+          # minted. The AUTHENTICATED user card is passed (not the possibly-downgraded `role`
+          # argument) so the grant follows the principal -- which is also what makes the
+          # namespaced mcp:i3:read scope mintable here and NOWHERE on the key-token path below.
           scopes: McpApi::AtomspaceGrants.scopes_for(api_key_id, user_card: user_card)
         )
       end
@@ -241,7 +243,9 @@ module Api
           api_key_id: api_key_id,
           expires_in: token_ttl,
           # Magi (SPEC 8.3): an API key never receives an AtomSpace scope, even if its key:<id> is
-          # listed in a grant, and the read API refuses non-user principals outright. `role` here is
+          # listed in a grant, and the read API refuses non-user principals outright. The same
+          # holds for the I3 read scope: `user_card` is intentionally NOT passed here, so
+          # scopes_for returns [] and NO mcp:i3:read ever rides on a key token. `role` here is
           # caller-supplied and only checked against the key card's own allowed_roles metadata --
           # and the legacy ENV key is allowed every role unconditionally (see
           # #allowed_role_for_key?) -- so role: "admin" on a key token is self-asserted, not an
